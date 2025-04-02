@@ -16,7 +16,7 @@ pub fn write_ip_lists_to_files(
     ipv4_list: &BTreeSet<IpNet>,
     ipv6_list: &BTreeSet<IpNet>,
     mode: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let ipv4_file = format!("IPv4_{}.txt", country_code);
     let ipv6_file = format!("IPv6_{}.txt", country_code);
 
@@ -31,7 +31,7 @@ fn write_single_ip_list<P: AsRef<Path>>(
     path: P,
     nets: &BTreeSet<IpNet>,
     mode: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let now = Local::now();
     let formatted_header = format!(
         "# {}/{}/{} {}:{}\n",
@@ -42,7 +42,6 @@ fn write_single_ip_list<P: AsRef<Path>>(
         now.minute()
     );
 
-    // ipnet -> string 変換して結合
     let lines: Vec<String> = nets.iter().map(|net| net.to_string()).collect();
     let content = format!("{}{}\n", formatted_header, lines.join("\n"));
 
@@ -95,6 +94,55 @@ pub fn write_as_ip_list_to_file(
         _ => {
             fs::write(&file_name, content)?;
             println!("[output] Wrote (overwrite) IP list to: {}", file_name);
+        }
+    }
+
+    Ok(())
+}
+
+/// 国コード & AS番号の重複CIDRリストをファイルに書き出すヘルパー関数.
+/// 例: overlap_JP_AS1234.txt
+pub fn write_overlap_to_file(
+    country_code: &str,
+    as_number: &str,
+    overlaps: &BTreeSet<IpNet>,
+    mode: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if overlaps.is_empty() {
+        println!(
+            "[overlap] No overlap found for country={} and AS={}",
+            country_code, as_number
+        );
+        return Ok(());
+    }
+
+    let filename = format!("overlap_{}_{}.txt", country_code, as_number);
+    let now_str = Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let header = format!(
+        "# Overlap between Country={} and AS={} at {}\n",
+        country_code, as_number, now_str
+    );
+
+    let body = overlaps
+        .iter()
+        .map(|net| net.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let content = format!("{}\n{}\n", header, body);
+
+    match mode {
+        "append" => {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&filename)?;
+            file.write_all(content.as_bytes())?;
+            println!("[overlap] Appended overlaps to: {}", filename);
+        }
+        _ => {
+            fs::write(&filename, content)?;
+            println!("[overlap] Wrote overlaps to: {}", filename);
         }
     }
 

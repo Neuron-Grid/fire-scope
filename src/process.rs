@@ -16,7 +16,8 @@ pub async fn process_country_code(
 }
 
 /// 全RIRテキストから、指定国コードに合致するIPアドレスをすべて集約し、BTreeSetとして返す。
-fn parse_and_collect_ips(
+/// ※ 重複抽出モジュールからも利用できるようにpubに変更
+pub fn parse_and_collect_ips(
     country_code: &str,
     rir_texts: &[String],
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn std::error::Error + Send + Sync>> {

@@ -57,7 +57,6 @@ pub async fn process_as_numbers(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 同一AS番号に対して IPv4, IPv6 を順次処理
     for as_number in as_numbers {
-        // IpFamily の列挙を使う例
         for &family in &[IpFamily::V4, IpFamily::V6] {
             match get_ips_for_as(as_number, family).await {
                 Ok(set) => {
