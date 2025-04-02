@@ -34,10 +34,11 @@ struct Cli {
         long = "as-number",
         required_unless_present_any = ["country_codes", "overlap"],
         required = false,
+        value_parser = clap::value_parser!(u32),
         num_args = 1..,
-        help = "Specify AS numbers.\nExample: AS0000 AS1234"
+        help = "Specify AS numbers.\nExample: 0000 1234"
     )]
-    as_numbers: Option<Vec<String>>,
+    as_numbers: Option<Vec<u32>>,
 
     #[arg(
         short = 'm',
@@ -45,7 +46,7 @@ struct Cli {
         default_value = "overwrite",
         required = false,
         hide_default_value = true,
-        help = "Select file output mode: 'append' or 'overwrite'\ndefault: overwrite"
+        help = "Select file output mode: 'append' or 'overwrite.\ndefault: overwrite"
     )]
     mode: String,
 
@@ -77,7 +78,12 @@ async fn run(args: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
     }
     // AS番号の処理
     if let Some(as_list) = &args.as_numbers {
-        process_as_numbers(as_list, &args.mode).await?;
+        // u32 のベクタを "AS" + 数値 の文字列ベクタへ変換
+        let as_strings = as_list
+            .iter()
+            .map(|n| format!("AS{}", n))
+            .collect::<Vec<_>>();
+        process_as_numbers(&as_strings, &args.mode).await?;
         return Ok(());
     }
     // 国コードの処理
@@ -95,27 +101,31 @@ async fn handle_overlap(
     args: &Cli,
     client: &Client,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // 引数チェック
-    // 国コードとAS番号が無い場合はエラー
-    let (country_codes, as_numbers) = validate_overlap_args(args)?;
+    // 引数チェック (国コード, AS番号) を取り出す
+    let (country_codes, as_numbers_u32) = validate_overlap_args(args)?;
     // RIRファイルをまとめてダウンロード
     let rir_texts = download_all_rir_files(client, RIR_URLS).await?;
-    //  国コードからIP集合を作成
+    // 国コードからIP集合を作成
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts)?;
+    // AS番号(u32)を "AS9999" 形式の文字列に変換
+    let as_numbers_str = as_numbers_u32
+        .iter()
+        .map(|n| format!("AS{}", n))
+        .collect::<Vec<_>>();
     // AS番号からIP集合を作成
-    let (as_ips_v4, as_ips_v6) = collect_as_ips(&as_numbers).await?;
+    let (as_ips_v4, as_ips_v6) = collect_as_ips(&as_numbers_str).await?;
     // 重複（オーバーラップ）を計算
     let overlaps = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
     // 結果をファイルへ書き出し
-    write_overlap_result(&country_codes, &as_numbers, &overlaps, &args.mode)?;
-
+    write_overlap_result(&country_codes, &as_numbers_str, &overlaps, &args.mode)?;
     Ok(())
 }
 
-/// 重複（オーバーラップ）に必要な引数（国コードとAS番号）をチェックする関数
+/// 国コード + AS番号を取り出しつつバリデーションを行う
+/// AS番号はu32で受け取るため、戻り値は(Vec<String>, Vec<u32>)
 fn validate_overlap_args(
     args: &Cli,
-) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Vec<String>, Vec<u32>), Box<dyn std::error::Error + Send + Sync>> {
     let country_codes = match &args.country_codes {
         Some(c) => c.clone(),
         None => {
@@ -124,6 +134,7 @@ fn validate_overlap_args(
         }
     };
     let as_numbers = match &args.as_numbers {
+        // Vec<u32>
         Some(a) => a.clone(),
         None => {
             eprintln!("Error: --overlap requires --country <codes> and --as-number <numbers>");
@@ -150,13 +161,12 @@ fn collect_country_ips(
     Ok((country_ips_v4, country_ips_v6))
 }
 
-/// AS番号からIPを収集する
+/// AS番号からIPを収集する (引数は "ASXXXX" 形式の文字列)
 async fn collect_as_ips(
     as_numbers: &[String],
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn std::error::Error + Send + Sync>> {
     let mut as_ips_v4 = BTreeSet::new();
     let mut as_ips_v6 = BTreeSet::new();
-
     for asn in as_numbers {
         let set_v4 = get_ips_for_as(asn, IpFamily::V4).await?;
         let set_v6 = get_ips_for_as(asn, IpFamily::V6).await?;
@@ -174,7 +184,6 @@ fn calculate_overlaps(
     // v4同士の重複とv6同士の重複を取得
     let overlaps_v4 = find_overlaps(&country_ips_v4, &as_ips_v4);
     let overlaps_v6 = find_overlaps(&country_ips_v6, &as_ips_v6);
-
     // 合算して返す
     overlaps_v4
         .into_iter()
@@ -202,7 +211,6 @@ async fn download_all_rir_files(
 ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     use futures::future::join_all;
     let mut handles = Vec::new();
-
     for url in urls {
         let url_owned = url.to_string();
         let client_ref = client.clone();
@@ -210,10 +218,8 @@ async fn download_all_rir_files(
             fetch_with_retry(&client_ref, &url_owned).await
         }));
     }
-
     let results = join_all(handles).await;
     let mut rir_texts = Vec::new();
-
     for res in results {
         match res {
             Ok(Ok(text)) => {
@@ -227,7 +233,6 @@ async fn download_all_rir_files(
             }
         }
     }
-
     Ok(rir_texts)
 }
 
@@ -238,14 +243,13 @@ async fn handle_country_codes(
     mode: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rir_texts = download_all_rir_files(client, RIR_URLS).await?;
-
     let mut tasks: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> =
         Vec::new();
     for code in country_codes {
         let rir_texts_clone = rir_texts.clone();
         let mode_clone = mode.to_string();
         let code_clone = code.to_uppercase();
-
+        // 国コードごとに非同期タスクを起動
         let handle = tokio::spawn(async move {
             if let Err(e) = process_country_code(&code_clone, &rir_texts_clone, &mode_clone).await {
                 eprintln!("エラー (国コード: {}): {}", code_clone, e);
@@ -255,6 +259,7 @@ async fn handle_country_codes(
         tasks.push(handle);
     }
 
+    // すべてのタスク完了を待機
     for t in tasks {
         let _ = t.await?;
     }
