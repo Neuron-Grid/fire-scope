@@ -1,4 +1,4 @@
-use rand::{Rng, rng};
+use rand::Rng;
 use reqwest::Client;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -27,7 +27,6 @@ pub async fn fetch_with_retry(
     for i in 0..retry_attempts {
         match fetch_once(client, url).await {
             Ok(text) => {
-                // 取得成功時はすぐ返す
                 return Ok(text);
             }
             Err(e) => {
@@ -37,7 +36,6 @@ pub async fn fetch_with_retry(
                     retry_attempts,
                     e
                 );
-                // 指数バックオフ + ランダムスリープ
                 let sleep_duration = calc_exponential_backoff_duration(i);
                 sleep(sleep_duration).await;
             }
@@ -53,8 +51,8 @@ pub async fn fetch_with_retry(
 
 /// 指数バックオフのスリープ時間を計算するヘルパー関数
 fn calc_exponential_backoff_duration(retry_count: u32) -> Duration {
-    // ランダムな要素を加える
-    let mut rng = rng();
+    let mut rng = rand::rng();
+    // 0.0 ~ 1.0 の乱数
     let random_part: f64 = rng.random();
 
     let base = 2u64.pow(retry_count);

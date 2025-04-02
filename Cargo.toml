@@ -2,6 +2,10 @@
 name = "fire-scope"
 version = "0.1.0"
 edition = "2024"
+authors = ["Neuron Grid <neuron-grid@neuron-grid.net>"]
+license = "MIT"
+readme = "README.md"
+description = "CLI application to retrieve the latest address allocation file provided by the RIR and output the IPv4/v6 address blocks corresponding to the specified country code in a text file."
 
 [dependencies]
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "process"] }
@@ -11,6 +15,3 @@ futures = "0.3.31"
 ipnet = "2.11.0"
 rand = "0.9.0"
 clap = { version = "4.5.32", features = ["derive"] }
-
-[[bin]]
-path = "src/main.rs"

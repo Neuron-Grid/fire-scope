@@ -2,7 +2,6 @@
 /// CIDR ブロックをどのサイズで切るか決めるためのユーティリティ。
 
 /// 範囲[current, end]の中で取れる最大の CIDR ブロックサイズを返す。
-/// 例: currentが192.168.0.0(=0xc0a80000), endが192.168.0.255(=0xc0a800ff)なら/24など
 pub fn largest_ipv4_block(current: u32, end: u32) -> u8 {
     let tz = current.trailing_zeros();
     let span = (end - current + 1).ilog2_sub1();
@@ -21,7 +20,6 @@ impl ILog2Sub1 for u32 {
         if *self == 0 {
             0
         } else {
-            // 2のべき乗の範囲を求めるためのヘルパー
             31 - self.leading_zeros()
         }
     }

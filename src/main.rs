@@ -1,11 +1,8 @@
 use clap::Parser;
-use fetch_ccip::asn::process_as_numbers;
-use fetch_ccip::fetch::fetch_with_retry;
-use fetch_ccip::process::process_country_code;
+use fire_scope::{asn::process_as_numbers, fetch::fetch_with_retry, process::process_country_code};
 use reqwest::Client;
 use tokio::task::JoinHandle;
 
-/// コマンドライン引数を処理するための構造体
 #[derive(Parser, Debug)]
 #[command(
     author,
@@ -25,7 +22,7 @@ struct Cli {
 
     #[arg(
         short = 'a',
-        long = "asnumber",
+        long = "as-number",
         required_unless_present = "country_codes",
         required = false,
         num_args = 1..,
@@ -46,32 +43,26 @@ struct Cli {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // コマンドライン引数を取得
     let args = Cli::parse();
-    // 実行処理を委譲
     run(args).await
 }
 
 /// アプリケーションのメインロジック
 async fn run(args: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // HTTPクライアント生成
     let client = Client::new();
 
-    // --asn オプションが指定された場合: AS番号ベースでルート取得
+    // --asn オプションが指定された場合
     if let Some(as_list) = &args.as_numbers {
-        // AS番号を処理
         process_as_numbers(as_list, &args.mode).await?;
         return Ok(());
     }
 
-    // --country オプションが指定された場合: 既存の国コード処理
+    // --country オプション
     if let Some(country_codes) = &args.country_codes {
-        // RIRファイルをすべてダウンロード
         let rir_texts = download_all_rir_files(&client, &RIR_URLS).await?;
 
-        // 各国コードごとに処理を並行実行
         let mut tasks: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> =
-            vec![];
+            Vec::new();
         for code in country_codes {
             let rir_texts_clone = rir_texts.clone();
             let mode_clone = args.mode.clone();
@@ -88,15 +79,14 @@ async fn run(args: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> 
             tasks.push(handle);
         }
 
-        // 全タスク終了を待機
         for t in tasks {
             let _ = t.await?;
         }
         return Ok(());
     }
 
-    // 両方指定されなかった場合はエラーか、あるいはヘルプを表示
-    eprintln!("Error: Please specify --country or --asn.\nUse --help for usage.");
+    // どちらも指定されなかった場合
+    eprintln!("Error: Please specify --country or --as-number.\nUse --help for usage.");
     Ok(())
 }
 

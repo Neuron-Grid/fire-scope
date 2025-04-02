@@ -12,7 +12,6 @@ pub fn parse_ip_lines(
     let mut ipv6_list = Vec::new();
 
     for line in text.lines() {
-        // コメント行やreserved行をスキップ
         if line.starts_with('#') || line.contains('*') || line.contains("reserved") {
             continue;
         }
@@ -22,26 +21,21 @@ pub fn parse_ip_lines(
             continue;
         }
 
-        // 国コードフィルタ
-        if params[1] != country_code {
-            continue;
-        }
-
-        let ip_type = params[2];
-        match ip_type {
-            "ipv4" | "ipv6" => match parse_ip_params(&params) {
-                Ok(nets) => {
-                    if ip_type == "ipv4" {
-                        ipv4_list.extend(nets);
-                    } else {
-                        ipv6_list.extend(nets);
+        if params[1].eq_ignore_ascii_case(country_code) {
+            let ip_type = params[2];
+            match ip_type {
+                "ipv4" | "ipv6" => match parse_ip_params(&params) {
+                    Ok(nets) => {
+                        if ip_type == "ipv4" {
+                            ipv4_list.extend(nets);
+                        } else {
+                            ipv6_list.extend(nets);
+                        }
                     }
-                }
-                Err(e) => {
-                    eprintln!("[parse_ip_lines] parse_ip_params error: {}", e);
-                }
-            },
-            _ => continue,
+                    Err(e) => eprintln!("[parse_ip_lines] parse_ip_params error: {}", e),
+                },
+                _ => continue,
+            }
         }
     }
 
@@ -98,7 +92,6 @@ fn parse_ipv6_range(
     start_str: &str,
     value_str: &str,
 ) -> Result<Vec<IpNet>, Box<dyn std::error::Error + Send + Sync>> {
-    // RIRのフォーマットでは`start_str/value_str`が基本
     let cidr_str = format!("{}/{}", start_str, value_str);
     let net = cidr_str.parse::<Ipv6Net>()?;
     Ok(vec![IpNet::V6(net)])
