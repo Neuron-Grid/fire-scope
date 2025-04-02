@@ -1,0 +1,16 @@
+[package]
+name = "fire-scope"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "process"] }
+reqwest = { version = "0.12.15", features = ["json", "rustls-tls"] }
+chrono = "0.4.40"
+futures = "0.3.31"
+ipnet = "2.11.0"
+rand = "0.9.0"
+clap = { version = "4.5.32", features = ["derive"] }
+
+[[bin]]
+path = "src/main.rs"
