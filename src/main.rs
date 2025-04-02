@@ -51,9 +51,11 @@ struct Cli {
 
     #[arg(
         long = "overlap",
-        help = "If both country code(s) and AS number(s) are specified, computes overlap only.",
+        help = "Write down the IP addresses of the overlapping country and AS numbers in a txt file.\nBoth the -c and -a arguments must be specified.",
         required = false,
-        default_value = "false"
+        default_value = "false",
+        requires("country_codes"),
+        requires("as_numbers")
     )]
     overlap: bool,
 }
