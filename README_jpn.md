@@ -33,7 +33,9 @@ $ cargo install fire-scope
 ```
 
 ### 実行例
-- `-c`か`-a`の引数がない場合はエラーが発生します。
+- **注意**
+  - `-c`か`-a`のどちらか一方は必ず指定してください。
+  - 指定しなかった場合はエラーが発生します。
 ```bash
 $ fire-scope -c jp us
 ```
@@ -42,8 +44,7 @@ $ fire-scope -c jp us
 $ fire-scope -a AS0000 AS1234
 ```
 
-- `-o`を使用する場合、`-c`と`-a`の両方の引数がない場合はエラーが発生します。
-```
+```bash
 $ fire-scope -c jp us -a AS0000 AS1234 -c
 ```
 

@@ -1,10 +1,11 @@
 [package]
 name = "fire-scope"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Neuron Grid <neuron-grid@neuron-grid.net>"]
 license = "MPL-2.0"
-readme = "README.md"
+readme = "README_eng.md"
+repository = "https://github.com/Neuron-Grid/fire-scope"
 description = "CLI application to retrieve the latest address allocation file provided by the RIR and output the IPv4/v6 address blocks corresponding to the specified country code in a text file."
 
 [dependencies]
