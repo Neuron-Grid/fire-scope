@@ -46,11 +46,12 @@ struct Cli {
         default_value = "overwrite",
         required = false,
         hide_default_value = true,
-        help = "Select file output mode: 'append' or 'overwrite.\ndefault: overwrite"
+        help = "Select file output mode: 'append' or 'overwrite'.\ndefault: overwrite"
     )]
     mode: String,
 
     #[arg(
+        short = 'o',
         long = "overlap",
         help = "Write down the IP addresses of the overlapping country and AS numbers in a txt file.\nBoth the -c and -a arguments must be specified.",
         required = false,
