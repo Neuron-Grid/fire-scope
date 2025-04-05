@@ -1,4 +1,5 @@
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
 /// RIR が提供するテキストデータを行ごとに解析し、
@@ -96,4 +97,50 @@ fn parse_ipv6_range(
     let cidr_str = format!("{}/{}", start_str, value_str);
     let net = cidr_str.parse::<Ipv6Net>()?;
     Ok(vec![IpNet::V6(net)])
+}
+
+/// 全RIRテキストから全ての国コードに対するIPアドレスをパースし、国コードをキーとするマップを返す。
+/// 戻り値: HashMap<国コード, (IPv4リスト, IPv6リスト)>
+type CountryIpMap = HashMap<String, (Vec<IpNet>, Vec<IpNet>)>;
+pub fn parse_all_country_codes(
+    rir_texts: &[String],
+) -> Result<CountryIpMap, Box<dyn std::error::Error + Send + Sync>> {
+    let mut country_map: HashMap<String, (Vec<IpNet>, Vec<IpNet>)> = HashMap::new();
+
+    for text in rir_texts {
+        for line in text.lines() {
+            if line.starts_with('#') || line.contains('*') || line.contains("reserved") {
+                continue;
+            }
+
+            let params: Vec<&str> = line.split('|').collect();
+            if params.len() < 5 {
+                continue;
+            }
+
+            let country_code = params[1].to_uppercase();
+            let ip_type = params[2];
+
+            match ip_type {
+                "ipv4" | "ipv6" => match parse_ip_params(&params) {
+                    Ok(nets) => {
+                        let entry = country_map
+                            .entry(country_code)
+                            .or_insert((Vec::new(), Vec::new()));
+                        if ip_type == "ipv4" {
+                            entry.0.extend(nets);
+                        } else {
+                            entry.1.extend(nets);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[parse_all_country_codes] parse_ip_params error: {}", e)
+                    }
+                },
+                _ => continue,
+            }
+        }
+    }
+
+    Ok(country_map)
 }

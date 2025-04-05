@@ -1,10 +1,9 @@
 use crate::common::OutputFormat;
 use crate::constants::RIR_URLS;
 use crate::fetch::fetch_with_retry;
-use crate::process::process_country_code;
+use crate::process::process_all_country_codes;
 use reqwest::Client;
 use std::error::Error;
-use tokio::task::JoinHandle;
 
 /// 国コード指定時の処理
 pub async fn run_country_codes(
@@ -16,29 +15,11 @@ pub async fn run_country_codes(
     // RIRファイルをすべてダウンロードしてメモリ上に保持
     let rir_texts = download_all_rir_files(client, RIR_URLS).await?;
 
-    // 国コードごとに非同期タスクを起動
-    let mut tasks: Vec<JoinHandle<Result<(), Box<dyn Error + Send + Sync>>>> = Vec::new();
-    for code in country_codes {
-        let rir_clone = rir_texts.clone();
-        let mode_clone = mode.to_string();
-        let format_clone = output_format;
-        let upper_code = code.to_uppercase();
-
-        let handle = tokio::spawn(async move {
-            // 1国コード分の処理
-            if let Err(e) =
-                process_country_code(&upper_code, &rir_clone, &mode_clone, format_clone).await
-            {
-                eprintln!("Error (country={}): {}", upper_code, e);
-            }
-            Ok(())
-        });
-        tasks.push(handle);
-    }
-
-    // すべてのタスクが完了するのを待つ
-    for t in tasks {
-        let _ = t.await?;
+    // 全ての国コードに対するIPアドレスを一度にパースして処理
+    if let Err(e) = process_all_country_codes(country_codes, &rir_texts, mode, output_format).await
+    {
+        eprintln!("国コード処理中にエラーが発生しました: {}", e);
+        return Err(e);
     }
 
     Ok(())
