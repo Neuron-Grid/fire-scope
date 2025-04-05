@@ -1,5 +1,7 @@
+use crate::common::OutputFormat;
+use crate::constants::RIR_URLS;
+use crate::fetch::fetch_with_retry;
 use crate::process::process_country_code;
-use crate::{constants::RIR_URLS, fetch::fetch_with_retry};
 use reqwest::Client;
 use std::error::Error;
 use tokio::task::JoinHandle;
@@ -9,6 +11,7 @@ pub async fn run_country_codes(
     country_codes: &[String],
     client: &Client,
     mode: &str,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // RIRファイルをすべてダウンロードしてメモリ上に保持
     let rir_texts = download_all_rir_files(client, RIR_URLS).await?;
@@ -18,10 +21,14 @@ pub async fn run_country_codes(
     for code in country_codes {
         let rir_clone = rir_texts.clone();
         let mode_clone = mode.to_string();
+        let format_clone = output_format;
         let upper_code = code.to_uppercase();
+
         let handle = tokio::spawn(async move {
             // 1国コード分の処理
-            if let Err(e) = process_country_code(&upper_code, &rir_clone, &mode_clone).await {
+            if let Err(e) =
+                process_country_code(&upper_code, &rir_clone, &mode_clone, format_clone).await
+            {
                 eprintln!("Error (country={}): {}", upper_code, e);
             }
             Ok(())

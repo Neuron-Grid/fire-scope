@@ -1,4 +1,5 @@
-use crate::{common::IpFamily, output::write_as_ip_list_to_file};
+use crate::common::{IpFamily, OutputFormat};
+use crate::output::write_as_ip_list_to_file;
 use ipnet::IpNet;
 use std::{collections::BTreeSet, error::Error, process::Stdio};
 use tokio::process::Command;
@@ -15,7 +16,6 @@ pub async fn get_ips_for_as(
         .arg("whois.radb.net")
         .arg("--")
         .arg(format!("-i origin {}", as_number))
-        // エラー出力を継承
         .stderr(Stdio::inherit())
         .output()
         .await?;
@@ -26,7 +26,7 @@ pub async fn get_ips_for_as(
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
 
-    // route_key = "route:" or "route6:" を列挙型から取得
+    // route_key = "route:" or "route6:"
     let route_key = family.route_key();
 
     // イテレータを使った抽出
@@ -54,6 +54,7 @@ pub async fn get_ips_for_as(
 pub async fn process_as_numbers(
     as_numbers: &[String],
     mode: &str,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 同一AS番号に対して IPv4, IPv6 を順次処理
     for as_number in as_numbers {
@@ -67,7 +68,8 @@ pub async fn process_as_numbers(
                             as_number
                         );
                     } else {
-                        write_as_ip_list_to_file(as_number, family, &set, mode)?;
+                        // nft/txtの出力切り替え
+                        write_as_ip_list_to_file(as_number, family, &set, mode, output_format)?;
                     }
                 }
                 Err(e) => eprintln!(

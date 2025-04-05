@@ -17,7 +17,7 @@ async fn fetch_once(
 
 /// HTTP GETによるデータ取得を、リトライ+指数バックオフ付きで行う。
 /// 成功時はレスポンス文字列を返す。
-/// `retry_attempts`回失敗した場合、エラーを返す。
+/// retry_attempts回失敗した場合、エラーを返す。
 pub async fn fetch_with_retry(
     client: &Client,
     url: &str,
@@ -52,7 +52,6 @@ pub async fn fetch_with_retry(
 /// 指数バックオフのスリープ時間を計算するヘルパー関数
 fn calc_exponential_backoff_duration(retry_count: u32) -> Duration {
     let mut rng = rand::rng();
-    // 0.0 ~ 1.0 の乱数
     let random_part: f64 = rng.random();
 
     let base = 2u64.pow(retry_count);

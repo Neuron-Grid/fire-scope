@@ -49,4 +49,14 @@ pub struct Cli {
         requires("as_numbers")
     )]
     pub overlap: bool,
+
+    #[arg(
+        short = 'f',
+        long = "format",
+        default_value = "txt",
+        required = false,
+        hide_default_value = true,
+        help = "Select output format: 'txt' or 'nft'.\ndefault: txt"
+    )]
+    pub output_format: String,
 }
