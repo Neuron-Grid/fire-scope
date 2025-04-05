@@ -1,4 +1,6 @@
 pub mod asn;
+pub mod cli;
+pub mod commands;
 pub mod common;
 pub mod fetch;
 pub mod output;

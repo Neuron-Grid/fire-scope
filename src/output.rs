@@ -100,15 +100,28 @@ pub fn write_as_ip_list_to_file(
     Ok(())
 }
 
-/// 国コード & AS番号の重複CIDRリストをファイルに書き出すヘルパー関数.
-/// 例: overlap_JP_AS1234.txt
+/// 国コード & AS番号の重複CIDRリストをファイルに書き出すヘルパー関数
 pub fn write_overlap_to_file(
     country_code: &str,
     as_number: &str,
     overlaps: &BTreeSet<IpNet>,
     mode: &str,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if overlaps.is_empty() {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // IPv4 / IPv6 を仕分け
+    let overlaps_v4: BTreeSet<IpNet> = overlaps
+        .iter()
+        .cloned()
+        .filter(|net| matches!(net, IpNet::V4(_)))
+        .collect();
+
+    let overlaps_v6: BTreeSet<IpNet> = overlaps
+        .iter()
+        .cloned()
+        .filter(|net| matches!(net, IpNet::V6(_)))
+        .collect();
+
+    // 重複がなければファイル出力しない
+    if overlaps_v4.is_empty() && overlaps_v6.is_empty() {
         println!(
             "[overlap] No overlap found for country={} and AS={}",
             country_code, as_number
@@ -116,33 +129,67 @@ pub fn write_overlap_to_file(
         return Ok(());
     }
 
-    let filename = format!("overlap_{}_{}.txt", country_code, as_number);
-    let now_str = Local::now().format("%Y-%m-%d %H:%M").to_string();
-    let header = format!(
-        "# Overlap between Country={} and AS={} at {}\n",
-        country_code, as_number, now_str
-    );
+    let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
 
-    let body = overlaps
-        .iter()
-        .map(|net| net.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
+    // IPv4 の書き出し
+    if !overlaps_v4.is_empty() {
+        let filename_v4 = format!("overlap_{}_{}_IPv4.txt", country_code, as_number);
+        let header_v4 = format!(
+            "# Overlap (IPv4) between Country={} and AS={} at {}\n",
+            country_code, as_number, now_str
+        );
+        let body_v4 = overlaps_v4
+            .iter()
+            .map(|net| net.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let content_v4 = format!("{}\n{}\n", header_v4, body_v4);
 
-    let content = format!("{}\n{}\n", header, body);
-
-    match mode {
-        "append" => {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&filename)?;
-            file.write_all(content.as_bytes())?;
-            println!("[overlap] Appended overlaps to: {}", filename);
+        match mode {
+            "append" => {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&filename_v4)?;
+                file.write_all(content_v4.as_bytes())?;
+                println!("[overlap] Appended IPv4 overlaps to: {}", filename_v4);
+            }
+            _ => {
+                std::fs::write(&filename_v4, &content_v4)?;
+                println!("[overlap] Wrote IPv4 overlaps to: {}", filename_v4);
+            }
         }
-        _ => {
-            fs::write(&filename, content)?;
-            println!("[overlap] Wrote overlaps to: {}", filename);
+    }
+
+    // IPv6 の書き出し
+    if !overlaps_v6.is_empty() {
+        let filename_v6 = format!("overlap_{}_{}_IPv6.txt", country_code, as_number);
+        let header_v6 = format!(
+            "# Overlap (IPv6) between Country={} and AS={} at {}\n",
+            country_code, as_number, now_str
+        );
+        let body_v6 = overlaps_v6
+            .iter()
+            .map(|net| net.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let content_v6 = format!("{}\n{}\n", header_v6, body_v6);
+
+        match mode {
+            "append" => {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&filename_v6)?;
+                file.write_all(content_v6.as_bytes())?;
+                println!("[overlap] Appended IPv6 overlaps to: {}", filename_v6);
+            }
+            _ => {
+                std::fs::write(&filename_v6, &content_v6)?;
+                println!("[overlap] Wrote IPv6 overlaps to: {}", filename_v6);
+            }
         }
     }
 

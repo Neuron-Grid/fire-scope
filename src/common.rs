@@ -19,7 +19,8 @@ impl FromStr for IpFamily {
 }
 
 impl IpFamily {
-    /// whois の route キーを返すメソッド
+    /// whois の route キーを返す
+    /// ("route:" / "route6:")
     pub fn route_key(self) -> &'static str {
         match self {
             IpFamily::V4 => "route:",
@@ -27,7 +28,7 @@ impl IpFamily {
         }
     }
 
-    /// ログ表示などに使う文字列
+    /// ログやファイル名で使うラベル用
     pub fn as_str(self) -> &'static str {
         match self {
             IpFamily::V4 => "IPv4",
