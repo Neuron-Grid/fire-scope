@@ -43,11 +43,15 @@ pub enum OutputFormat {
     Nft,
 }
 
-impl OutputFormat {
-    pub fn from_str(s: &str) -> Self {
+// ここで標準トレイト `FromStr` を実装し、文字列 => `OutputFormat` 変換を行う
+impl FromStr for OutputFormat {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "nft" => OutputFormat::Nft,
-            _ => OutputFormat::Txt, // デフォルトは Txt
+            "nft" => Ok(OutputFormat::Nft),
+            "txt" | "" => Ok(OutputFormat::Txt),
+            _ => Err("Invalid output format. Valid options: 'txt' or 'nft'"),
         }
     }
 }

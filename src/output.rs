@@ -110,7 +110,7 @@ fn write_single_ip_list_nft<P: AsRef<Path>>(
             let mut file = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&file_path)?;
+                .open(file_path)?;
             file.write_all(content.as_bytes())?;
             println!("[output] Appended nft rules to: {}", file_path.display());
         }
