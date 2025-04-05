@@ -1,7 +1,8 @@
+use crate::ipv4_utils::ipv4_summarize_range;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::cmp::{max, min};
 use std::collections::BTreeSet;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv6Addr;
 
 /// 国別IPs, AS別IPs それぞれから得られたBTreeSet<IpNet>を受け取り、
 /// 部分的に重複している範囲（サブネット）をすべてBTreeSet<IpNet>で返す。
@@ -41,37 +42,8 @@ fn ipv4_overlap(a: &Ipv4Net, b: &Ipv4Net) -> Vec<IpNet> {
         return Vec::new();
     }
 
+    // 共通化した ipv4_summarize_range を利用
     ipv4_summarize_range(overlap_start, overlap_end)
-}
-
-/// IPv4用
-/// 開始～終了アドレスを最適なCIDRに分割
-fn ipv4_summarize_range(start: u32, end: u32) -> Vec<IpNet> {
-    let mut cidrs = Vec::new();
-    let mut current = start;
-
-    while current <= end {
-        let max_size = largest_ipv4_block_in_overlap(current, end);
-        if let Ok(net) = Ipv4Net::new(Ipv4Addr::from(current), max_size) {
-            cidrs.push(IpNet::V4(net));
-            let block_size = 1u32 << (32 - max_size);
-            current = current.saturating_add(block_size);
-        } else {
-            break;
-        }
-    }
-
-    cidrs
-}
-
-/// IPv4用
-/// 重複計算用の最大ブロックサイズ判定
-fn largest_ipv4_block_in_overlap(current: u32, end: u32) -> u8 {
-    let tz = current.trailing_zeros();
-    // Rust 1.67+ で使える標準ライブラリの ilog2() を利用
-    let span = (end - current + 1).ilog2();
-    let max_block = tz.min(span);
-    (32 - max_block) as u8
 }
 
 /// IPv6同士の重複範囲を求めてCIDR列として返す
@@ -90,8 +62,7 @@ fn ipv6_overlap(a: &Ipv6Net, b: &Ipv6Net) -> Vec<IpNet> {
     ipv6_summarize_range(overlap_start, overlap_end)
 }
 
-/// IPv6用
-/// 開始～終了アドレスを最適なCIDRに分割
+/// 開始～終了アドレスを最適なIPv6 CIDRに分割
 fn ipv6_summarize_range(start: u128, end: u128) -> Vec<IpNet> {
     let mut cidrs = Vec::new();
     let mut current = start;
@@ -111,26 +82,22 @@ fn ipv6_summarize_range(start: u128, end: u128) -> Vec<IpNet> {
 }
 
 /// IPv6用
-/// 重複計算用の最大ブロックサイズ判定
 fn largest_ipv6_block_in_overlap(current: u128, end: u128) -> u8 {
     let tz = current.trailing_zeros() as u128;
-    // u128 用はまだ標準で ilog2() がないため、自前トレイトを使用
     let span = (end - current + 1).ilog2_128();
     let max_block = tz.min(span);
     (128 - max_block) as u8
 }
 
-/// ヘルパー関数
 /// Ipv6Addrをu128に変換
 fn ipv6_to_u128(addr: Ipv6Addr) -> u128 {
     u128::from_be_bytes(addr.octets())
 }
 
-/// u128用のilog2相当
+/// u128用の ilog2相当
 trait ILog2U128 {
     fn ilog2_128(self) -> u128;
 }
-
 impl ILog2U128 for u128 {
     fn ilog2_128(self) -> u128 {
         if self == 0 {

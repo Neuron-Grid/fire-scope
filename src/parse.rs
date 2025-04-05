@@ -1,4 +1,3 @@
-use crate::parse_ipv4::largest_ipv4_block;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::net::Ipv4Addr;
 
@@ -75,8 +74,10 @@ fn parse_ipv4_range(
     let mut cidrs = Vec::new();
     let mut current = start_num;
 
+    // ここで parse_ipv4::largest_ipv4_block を呼ぶか、
+    // あるいは ipv4_utils::largest_ipv4_block に切り替えてもOK。
     while current <= end_num {
-        let max_size = largest_ipv4_block(current, end_num);
+        let max_size = crate::ipv4_utils::largest_ipv4_block(current, end_num);
         let net = Ipv4Net::new(Ipv4Addr::from(current), max_size)?;
         cidrs.push(IpNet::V4(net));
 

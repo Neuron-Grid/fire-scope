@@ -3,7 +3,7 @@ use fire_scope::cli::Cli;
 use fire_scope::common::OutputFormat;
 use reqwest::Client;
 use std::error::Error;
-use std::str::FromStr; // FromStrを使うので必要
+use std::str::FromStr;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -16,7 +16,6 @@ async fn run(args: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = Client::new();
 
     // 出力形式をenumに変換
-    // Resultのエラー処
     let format_enum = match OutputFormat::from_str(&args.output_format) {
         Ok(fmt) => fmt,
         Err(_) => {
