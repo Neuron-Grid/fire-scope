@@ -1,6 +1,6 @@
 use crate::asn::get_ips_for_as;
 use crate::cli::Cli;
-use crate::common::IpFamily;
+use crate::common::{IpFamily, OutputFormat};
 use crate::constants::RIR_URLS;
 use crate::fetch::fetch_with_retry;
 use crate::output::write_overlap_to_file;
@@ -13,24 +13,31 @@ use std::error::Error;
 
 /// --overlap が指定された場合に呼ばれる処理
 pub async fn run_overlap(
-    args: &Cli, // main.rs から受け取った Cli 構造体
+    args: &Cli,
     client: &Client,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (country_codes, as_numbers) = validate_args(args)?;
     let rir_texts = download_all_rir_files(client).await?;
 
-    // 1. 国コードからIP集合を収集
+    // 国コードからIP集合を収集
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts)?;
 
-    // 2. AS番号からIP集合を収集
+    // AS番号からIP集合を収集
     let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
     let (as_ips_v4, as_ips_v6) = collect_as_ips(&as_strings).await?;
 
-    // 3. オーバーラップを計算
+    // オーバーラップを計算
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
 
-    // 4. 結果をファイルに書き出し
-    write_overlap_result(&country_codes, &as_strings, &overlap_nets, &args.mode)?;
+    // 結果をファイルに書き出し
+    write_overlap_result(
+        &country_codes,
+        &as_strings,
+        &overlap_nets,
+        &args.mode,
+        output_format,
+    )?;
     Ok(())
 }
 
@@ -123,6 +130,7 @@ fn write_overlap_result(
     as_strings: &[String],
     overlap_nets: &BTreeSet<IpNet>,
     mode: &str,
+    output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     if overlap_nets.is_empty() {
         println!(
@@ -134,6 +142,12 @@ fn write_overlap_result(
 
     let combined_country = countries.join("_").to_uppercase();
     let combined_asn = as_strings.join("_");
-    write_overlap_to_file(&combined_country, &combined_asn, overlap_nets, mode)?;
+    write_overlap_to_file(
+        &combined_country,
+        &combined_asn,
+        overlap_nets,
+        mode,
+        output_format,
+    )?;
     Ok(())
 }

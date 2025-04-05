@@ -1,13 +1,12 @@
 use clap::Parser;
 use fire_scope::cli::Cli;
+use fire_scope::common::OutputFormat;
 use reqwest::Client;
 use std::error::Error;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
-    // CLI引数を解析
     let args = Cli::parse();
-    // 実行
     run(args).await
 }
 
@@ -15,16 +14,19 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 async fn run(args: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = Client::new();
 
+    // 出力形式をenumに変換
+    let format_enum = OutputFormat::from_str(&args.output_format);
+
     // overlap 指定時
     if args.overlap {
-        // fire_scope::commands::handle_overlap::run_overlap(...)
-        fire_scope::commands::handle_overlap::run_overlap(&args, &client).await?;
+        fire_scope::commands::handle_overlap::run_overlap(&args, &client, format_enum).await?;
         return Ok(());
     }
 
     // AS番号指定時
     if let Some(as_list) = &args.as_numbers {
-        fire_scope::commands::handle_as_numbers::run_as_numbers(as_list, &args.mode).await?;
+        fire_scope::commands::handle_as_numbers::run_as_numbers(as_list, &args.mode, format_enum)
+            .await?;
         return Ok(());
     }
 
@@ -34,6 +36,7 @@ async fn run(args: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
             country_codes,
             &client,
             &args.mode,
+            format_enum,
         )
         .await?;
         return Ok(());

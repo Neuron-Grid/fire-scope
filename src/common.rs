@@ -19,8 +19,7 @@ impl FromStr for IpFamily {
 }
 
 impl IpFamily {
-    /// whois の route キーを返す
-    /// ("route:" / "route6:")
+    /// whoisのrouteキーを返す ("route:" / "route6:")
     pub fn route_key(self) -> &'static str {
         match self {
             IpFamily::V4 => "route:",
@@ -33,6 +32,22 @@ impl IpFamily {
         match self {
             IpFamily::V4 => "IPv4",
             IpFamily::V6 => "IPv6",
+        }
+    }
+}
+
+/// 出力形式を管理するためのenum
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Txt,
+    Nft,
+}
+
+impl OutputFormat {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "nft" => OutputFormat::Nft,
+            _ => OutputFormat::Txt, // デフォルトは Txt
         }
     }
 }
