@@ -8,6 +8,13 @@ readme = "README_eng.md"
 repository = "https://github.com/Neuron-Grid/fire-scope"
 description = "CLI application to retrieve the latest address allocation file provided by the RIR and output the IPv4/v6 address blocks corresponding to the specified country code in a text file."
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fire-scope"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "process"] }
 reqwest = { version = "0.12.15", features = ["json", "rustls-tls"] }
