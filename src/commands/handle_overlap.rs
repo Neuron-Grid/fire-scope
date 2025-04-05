@@ -1,11 +1,10 @@
 use crate::asn::get_ips_for_as;
 use crate::cli::Cli;
 use crate::common::{IpFamily, OutputFormat};
-use crate::constants::RIR_URLS;
-use crate::fetch::fetch_with_retry;
 use crate::output::write_overlap_to_file;
 use crate::overlap::find_overlaps;
 use crate::process::parse_and_collect_ips;
+use crate::rir_download::download_all_rir_files;
 use ipnet::IpNet;
 use reqwest::Client;
 use std::collections::BTreeSet;
@@ -18,6 +17,7 @@ pub async fn run_overlap(
     output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (country_codes, as_numbers) = validate_args(args)?;
+    // ここで共通化した RIRダウンロードを呼ぶ
     let rir_texts = download_all_rir_files(client).await?;
 
     // 国コードからIP集合を収集
@@ -52,33 +52,6 @@ fn validate_args(args: &Cli) -> Result<(Vec<String>, Vec<u32>), Box<dyn Error + 
         .clone()
         .ok_or("Error: --overlap requires --as-number <numbers>")?;
     Ok((country_codes, as_numbers))
-}
-
-/// RIRファイルの一括ダウンロード
-async fn download_all_rir_files(
-    client: &Client,
-) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
-    use futures::future::join_all;
-
-    let mut handles = Vec::new();
-    for url in RIR_URLS {
-        let url_owned = url.to_string();
-        let c = client.clone();
-        handles.push(tokio::spawn(async move {
-            fetch_with_retry(&c, &url_owned).await
-        }));
-    }
-
-    let results = join_all(handles).await;
-    let mut rir_texts = Vec::new();
-    for r in results {
-        match r {
-            Ok(Ok(text)) => rir_texts.push(text),
-            Ok(Err(e)) => eprintln!("HTTPエラー: {}", e),
-            Err(e) => eprintln!("タスク失敗: {}", e),
-        }
-    }
-    Ok(rir_texts)
 }
 
 /// 国コードからIPを収集
