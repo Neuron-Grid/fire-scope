@@ -3,6 +3,7 @@ use fire_scope::cli::Cli;
 use fire_scope::common::OutputFormat;
 use reqwest::Client;
 use std::error::Error;
+use std::str::FromStr; // FromStrを使うので必要
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -15,9 +16,19 @@ async fn run(args: Cli) -> Result<(), Box<dyn Error + Send + Sync>> {
     let client = Client::new();
 
     // 出力形式をenumに変換
-    let format_enum = OutputFormat::from_str(&args.output_format);
+    // Resultのエラー処
+    let format_enum = match OutputFormat::from_str(&args.output_format) {
+        Ok(fmt) => fmt,
+        Err(_) => {
+            eprintln!(
+                "Warning: Invalid output format '{}'. Using default 'txt'.",
+                args.output_format
+            );
+            OutputFormat::Txt
+        }
+    };
 
-    // overlap 指定時
+    // overlap指定時
     if args.overlap {
         fire_scope::commands::handle_overlap::run_overlap(&args, &client, format_enum).await?;
         return Ok(());

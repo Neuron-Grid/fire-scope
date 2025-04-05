@@ -1,6 +1,4 @@
-/// IPv4 の範囲をサブネットに分割する際に、
-/// CIDR ブロックをどのサイズで切るか決めるためのユーティリティ。
-
+/// IPv4 の範囲をサブネットに分割する際に、CIDRブロックをどのサイズで切るか決めるためのユーティリティ。
 /// 範囲[current, end]の中で取れる最大の CIDR ブロックサイズを返す。
 pub fn largest_ipv4_block(current: u32, end: u32) -> u8 {
     let tz = current.trailing_zeros();
