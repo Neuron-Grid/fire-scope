@@ -1,17 +1,8 @@
-use crate::fetch::fetch_with_retry;
 use crate::process::process_country_code;
+use crate::{constants::RIR_URLS, fetch::fetch_with_retry};
 use reqwest::Client;
 use std::error::Error;
 use tokio::task::JoinHandle;
-
-/// RIRファイルをダウンロードする際に使用するURLのリスト
-const RIR_URLS: &[&str] = &[
-    "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
-    "https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
-    "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest",
-    "https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest",
-    "https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest",
-];
 
 /// 国コード指定時の処理
 pub async fn run_country_codes(

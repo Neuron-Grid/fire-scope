@@ -1,6 +1,7 @@
 use crate::asn::get_ips_for_as;
 use crate::cli::Cli;
 use crate::common::IpFamily;
+use crate::constants::RIR_URLS;
 use crate::fetch::fetch_with_retry;
 use crate::output::write_overlap_to_file;
 use crate::overlap::find_overlaps;
@@ -9,15 +10,6 @@ use ipnet::IpNet;
 use reqwest::Client;
 use std::collections::BTreeSet;
 use std::error::Error;
-
-/// RIRファイルURL
-const RIR_URLS: &[&str] = &[
-    "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
-    "https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
-    "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest",
-    "https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest",
-    "https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest",
-];
 
 /// --overlap が指定された場合に呼ばれる処理
 pub async fn run_overlap(
