@@ -2,6 +2,7 @@ pub mod asn;
 pub mod cli;
 pub mod commands;
 pub mod common;
+pub mod constants;
 pub mod fetch;
 pub mod output;
 pub mod overlap;
