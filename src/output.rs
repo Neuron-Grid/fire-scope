@@ -1,5 +1,5 @@
 use crate::common::{IpFamily, OutputFormat};
-use chrono::{Datelike, Local, Timelike};
+use chrono::Local;
 use ipnet::IpNet;
 use std::{
     collections::BTreeSet,
@@ -23,9 +23,8 @@ pub fn write_ip_lists_to_files(
             // 従来のテキストファイル出力
             let ipv4_file = format!("IPv4_{}.txt", country_code);
             let ipv6_file = format!("IPv6_{}.txt", country_code);
-
-            write_single_ip_list_txt(&ipv4_file, ipv4_list, mode)?;
-            write_single_ip_list_txt(&ipv6_file, ipv6_list, mode)?;
+            write_single_ip_list_txt(&ipv4_file, ipv4_list, mode, country_code, "N/A")?;
+            write_single_ip_list_txt(&ipv6_file, ipv6_list, mode, country_code, "N/A")?;
         }
         OutputFormat::Nft => {
             // nftables用ファイル出力
@@ -44,19 +43,18 @@ fn write_single_ip_list_txt<P: AsRef<Path>>(
     path: P,
     nets: &BTreeSet<IpNet>,
     mode: &str,
+    country_code: &str,
+    as_number: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let now = Local::now();
-    let formatted_header = format!(
-        "# {}/{}/{} {}:{}\n",
-        now.year(),
-        now.month(),
-        now.day(),
-        now.hour(),
-        now.minute()
+    let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let header = format!(
+        "# Generated at: {}\n# Country Code: {}\n# AS Number: {}\n\n",
+        now_str, country_code, as_number
     );
 
+    // 従来の本体部分
     let lines: Vec<String> = nets.iter().map(|net| net.to_string()).collect();
-    let content = format!("{}{}\n", formatted_header, lines.join("\n"));
+    let content = format!("{}{}\n", header, lines.join("\n"));
 
     match mode {
         "append" => {
@@ -98,7 +96,7 @@ fn write_single_ip_list_nft<P: AsRef<Path>>(
         now_str, country_code
     );
 
-    // NFT 出力内容
+    // NFT出力内容
     let mut content = String::new();
     content.push_str(&header);
     content.push_str(&format!("define {} {{\n", define_name));
@@ -141,7 +139,7 @@ pub fn write_as_ip_list_to_file(
         OutputFormat::Txt => {
             // 従来のテキストファイル出力
             let file_name = format!("AS_{}_{}.txt", as_number, family.as_str());
-            write_as_ip_list_txt(&file_name, ipnets, mode)?;
+            write_as_ip_list_txt(&file_name, ipnets, mode, as_number)?;
         }
         OutputFormat::Nft => {
             // nftables用出力
@@ -158,9 +156,14 @@ fn write_as_ip_list_txt(
     file_name: &str,
     ipnets: &BTreeSet<IpNet>,
     mode: &str,
+    as_number: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let now = Local::now().format("%Y-%m-%d %H:%M").to_string();
-    let header = format!("# Execution Date and Time: {}\n", now);
+    let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let header = format!(
+        "# Generated at: {}\n# Country Code: N/A\n# AS Number: {}\n\n",
+        now_str, as_number
+    );
+
     let body = ipnets
         .iter()
         .map(IpNet::to_string)
@@ -186,18 +189,19 @@ fn write_as_ip_list_txt(
     Ok(())
 }
 
-/// nftables出力 (AS番号用)
+/// nftables出力
+/// AS番号用
 fn write_as_ip_list_nft(
     file_name: &str,
     ipnets: &BTreeSet<IpNet>,
-    as_number: &str, // ★ 追加
+    as_number: &str,
     mode: &str,
     _family: IpFamily,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use chrono::Local;
     use std::path::Path;
 
-    // 先頭コメント用のヘッダ
+    // 先頭コメント用のヘッダー
     let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let header = format!(
         "# Generated at: {}\n# Country Code: N/A\n# AS Number: {}\n\n",
@@ -212,7 +216,7 @@ fn write_as_ip_list_nft(
 
     // "define <define_name> {\n  <CIDR>,\n  <CIDR>,\n}"形式の文字列を組み立て
     let mut content = String::new();
-    content.push_str(&header); // ★ ヘッダー追加
+    content.push_str(&header);
     content.push_str(&format!("define {} {{\n", define_name));
     for net in ipnets {
         content.push_str(&format!("    {},\n", net));
@@ -292,21 +296,21 @@ fn write_overlap_txt(
     overlaps_v6: &BTreeSet<IpNet>,
     mode: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let now_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     // IPv4
     if !overlaps_v4.is_empty() {
         let filename_v4 = format!("overlap_{}_{}_IPv4.txt", country_code, as_number);
         let header_v4 = format!(
-            "# Overlap (IPv4) between Country={} and AS={} at {}\n",
-            country_code, as_number, now_str
+            "# Generated at: {}\n# Country Code: {}\n# AS Number: {}\n\n",
+            now_str, country_code, as_number
         );
         let body_v4 = overlaps_v4
             .iter()
             .map(|net| net.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        let content_v4 = format!("{}\n{}\n", header_v4, body_v4);
+        let content_v4 = format!("{}{}\n", header_v4, body_v4);
 
         match mode {
             "append" => {
@@ -328,15 +332,15 @@ fn write_overlap_txt(
     if !overlaps_v6.is_empty() {
         let filename_v6 = format!("overlap_{}_{}_IPv6.txt", country_code, as_number);
         let header_v6 = format!(
-            "# Overlap (IPv6) between Country={} and AS={} at {}\n",
-            country_code, as_number, now_str
+            "# Generated at: {}\n# Country Code: {}\n# AS Number: {}\n\n",
+            now_str, country_code, as_number
         );
         let body_v6 = overlaps_v6
             .iter()
             .map(|net| net.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        let content_v6 = format!("{}\n{}\n", header_v6, body_v6);
+        let content_v6 = format!("{}{}\n", header_v6, body_v6);
 
         match mode {
             "append" => {
