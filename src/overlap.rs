@@ -1,68 +1,122 @@
 use crate::ipv4_utils::ipv4_summarize_range;
-use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+use ipnet::{IpNet, Ipv6Net};
 use std::cmp::{max, min};
 use std::collections::BTreeSet;
 use std::net::Ipv6Addr;
 
-/// 国別IPs, AS別IPs それぞれから得られたBTreeSet<IpNet>を受け取り、
+/// 国別IPs, AS別IPsそれぞれから得られたBTreeSet<IpNet>を受け取り、
 /// 部分的に重複している範囲（サブネット）をすべてBTreeSet<IpNet>で返す。
+/// 改良版: まず集約→IPv4/IPv6分割→2ポインタ方式で重複計算
 pub fn find_overlaps(country_ips: &BTreeSet<IpNet>, as_ips: &BTreeSet<IpNet>) -> BTreeSet<IpNet> {
-    let mut result = BTreeSet::new();
+    // まず両者をaggregateしてサブネット個数を削減
+    let country_agg = IpNet::aggregate(&country_ips.iter().copied().collect::<Vec<_>>());
+    let as_agg = IpNet::aggregate(&as_ips.iter().copied().collect::<Vec<_>>());
 
-    for cnet in country_ips {
-        for anet in as_ips {
-            let overlap_cidrs = ipnet_overlap(cnet, anet);
-            result.extend(overlap_cidrs);
+    // IPv4/IPv6をそれぞれ分割
+    let (mut c_v4, mut c_v6) = split_ipv4_ipv6(&country_agg);
+    let (mut a_v4, mut a_v6) = split_ipv4_ipv6(&as_agg);
+
+    // 開始アドレス順にソート
+    c_v4.sort_by_key(|(start, _end)| *start);
+    c_v6.sort_by_key(|(start, _end)| *start);
+    a_v4.sort_by_key(|(start, _end)| *start);
+    a_v6.sort_by_key(|(start, _end)| *start);
+
+    // それぞれ2ポインタでオーバーラップを求める
+    let overlap_v4 = overlap_ranges_v4(&c_v4, &a_v4);
+    let overlap_v6 = overlap_ranges_v6(&c_v6, &a_v6);
+
+    // 合体してBTreeSetに
+    overlap_v4
+        .into_iter()
+        .chain(overlap_v6.into_iter())
+        .collect()
+}
+
+/// IpNetベクタを IPv4, IPv6 それぞれ (start, end)形式に変換して返す
+fn split_ipv4_ipv6(nets: &[IpNet]) -> (Vec<(u32, u32)>, Vec<(u128, u128)>) {
+    let mut v4_ranges = Vec::new();
+    let mut v6_ranges = Vec::new();
+
+    for net in nets {
+        match net {
+            IpNet::V4(v4net) => {
+                let start = u32::from(v4net.network());
+                let end = u32::from(v4net.broadcast());
+                v4_ranges.push((start, end));
+            }
+            IpNet::V6(v6net) => {
+                let start = ipv6_to_u128(v6net.network());
+                let end = ipv6_to_u128(v6net.broadcast());
+                v6_ranges.push((start, end));
+            }
         }
     }
+    (v4_ranges, v6_ranges)
+}
+
+/// 2つのソート済みIPv4範囲リストを 2ポインタで走査して重複区間をCIDR単位で返す
+fn overlap_ranges_v4(country: &[(u32, u32)], aslist: &[(u32, u32)]) -> Vec<IpNet> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < country.len() && j < aslist.len() {
+        let (c_start, c_end) = country[i];
+        let (a_start, a_end) = aslist[j];
+
+        // 重複範囲の開始/終了
+        let overlap_start = max(c_start, a_start);
+        let overlap_end = min(c_end, a_end);
+
+        if overlap_start <= overlap_end {
+            // CIDR単位に分割
+            let cidrs = ipv4_summarize_range(overlap_start, overlap_end);
+            result.extend(cidrs);
+        }
+
+        // どちらかが先に終わるかでポインタを進める
+        if c_end < a_end {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+
     result
 }
 
-/// 2つのIpNetの重複範囲をCIDRのリストで返す。
-/// 部分的にでも被っていればOK
-fn ipnet_overlap(a: &IpNet, b: &IpNet) -> Vec<IpNet> {
-    match (a, b) {
-        (IpNet::V4(a4), IpNet::V4(b4)) => ipv4_overlap(a4, b4),
-        (IpNet::V6(a6), IpNet::V6(b6)) => ipv6_overlap(a6, b6),
-        // IPv4 と IPv6 は重複しない
-        _ => Vec::new(),
-    }
-}
+/// 2つのソート済みIPv6範囲リストを2ポインタで走査して重複区間をCIDR単位で返す
+fn overlap_ranges_v6(country: &[(u128, u128)], aslist: &[(u128, u128)]) -> Vec<IpNet> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
 
-/// IPv4同士の重複範囲を求めてCIDR列として返す
-fn ipv4_overlap(a: &Ipv4Net, b: &Ipv4Net) -> Vec<IpNet> {
-    let a_start = u32::from(a.network());
-    let a_end = u32::from(a.broadcast());
-    let b_start = u32::from(b.network());
-    let b_end = u32::from(b.broadcast());
+    while i < country.len() && j < aslist.len() {
+        let (c_start, c_end) = country[i];
+        let (a_start, a_end) = aslist[j];
 
-    let overlap_start = max(a_start, b_start);
-    let overlap_end = min(a_end, b_end);
-    if overlap_start > overlap_end {
-        return Vec::new();
-    }
+        let overlap_start = max(c_start, a_start);
+        let overlap_end = min(c_end, a_end);
 
-    // 共通化した ipv4_summarize_range を利用
-    ipv4_summarize_range(overlap_start, overlap_end)
-}
+        if overlap_start <= overlap_end {
+            // CIDR単位に分割
+            let cidrs = ipv6_summarize_range(overlap_start, overlap_end);
+            result.extend(cidrs);
+        }
 
-/// IPv6同士の重複範囲を求めてCIDR列として返す
-fn ipv6_overlap(a: &Ipv6Net, b: &Ipv6Net) -> Vec<IpNet> {
-    let a_start = ipv6_to_u128(a.network());
-    let a_end = ipv6_to_u128(a.broadcast());
-    let b_start = ipv6_to_u128(b.network());
-    let b_end = ipv6_to_u128(b.broadcast());
-
-    let overlap_start = max(a_start, b_start);
-    let overlap_end = min(a_end, b_end);
-    if overlap_start > overlap_end {
-        return Vec::new();
+        if c_end < a_end {
+            i += 1;
+        } else {
+            j += 1;
+        }
     }
 
-    ipv6_summarize_range(overlap_start, overlap_end)
+    result
 }
 
 /// 開始～終了アドレスを最適なIPv6 CIDRに分割
+/// 従来のipv6_overlap内部ロジックを外部化
 fn ipv6_summarize_range(start: u128, end: u128) -> Vec<IpNet> {
     let mut cidrs = Vec::new();
     let mut current = start;
@@ -81,7 +135,12 @@ fn ipv6_summarize_range(start: u128, end: u128) -> Vec<IpNet> {
     cidrs
 }
 
-/// IPv6用
+/// IPv6アドレスをu128に
+fn ipv6_to_u128(addr: Ipv6Addr) -> u128 {
+    u128::from_be_bytes(addr.octets())
+}
+
+/// IPv6の範囲を切り分けるためのブロックサイズを決定
 fn largest_ipv6_block_in_overlap(current: u128, end: u128) -> u8 {
     let tz = current.trailing_zeros() as u128;
     let span = (end - current + 1).ilog2_128();
@@ -89,12 +148,7 @@ fn largest_ipv6_block_in_overlap(current: u128, end: u128) -> u8 {
     (128 - max_block) as u8
 }
 
-/// Ipv6Addrをu128に変換
-fn ipv6_to_u128(addr: Ipv6Addr) -> u128 {
-    u128::from_be_bytes(addr.octets())
-}
-
-/// u128用の ilog2相当
+/// u128用のilog2相当
 trait ILog2U128 {
     fn ilog2_128(self) -> u128;
 }
