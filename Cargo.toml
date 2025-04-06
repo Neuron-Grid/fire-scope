@@ -6,7 +6,8 @@ authors = ["Neuron Grid <neuron-grid@neuron-grid.net>"]
 license = "MPL-2.0"
 readme = "README_eng.md"
 repository = "https://github.com/Neuron-Grid/fire-scope"
-description = "CLI application to retrieve the latest address allocation file provided by the RIR and output the IPv4/v6 address blocks corresponding to the specified country code in a text file."
+description = "This tool is a CLI application and library that collects and aggregates corresponding IP addresses by specifying country codes and AS numbers, and outputs them to a file in TXT or nftables format.It supports RIR file download and whois AS number query, and also has a function to extract overlapping parts of country codes and AS numbers in CIDR units."
+categories = ["command-line-utilities"]
 
 [lib]
 path = "src/lib.rs"

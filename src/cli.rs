@@ -42,7 +42,7 @@ pub struct Cli {
     #[arg(
         short = 'o',
         long = "overlap",
-        help = "Write down the IP addresses of the overlapping country and AS numbers in a txt file.\nBoth the -c and -a arguments must be specified.",
+        help = "Write down the IP addresses of the overlapping country and AS numbers in a file of your choice.\nBoth the -c and -a arguments must be specified.",
         required = false,
         default_value = "false",
         requires("country_codes"),

@@ -1,6 +1,6 @@
-use crate::asn::get_ips_for_as;
+use crate::asn::get_ips_for_as_once;
 use crate::cli::Cli;
-use crate::common::{IpFamily, OutputFormat};
+use crate::common::OutputFormat;
 use crate::output::write_overlap_to_file;
 use crate::overlap::find_overlaps;
 use crate::process::parse_and_collect_ips;
@@ -17,20 +17,19 @@ pub async fn run_overlap(
     output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (country_codes, as_numbers) = validate_args(args)?;
-    // ここで共通化した RIRダウンロードを呼ぶ
     let rir_texts = download_all_rir_files(client).await?;
 
-    // 国コードからIP集合を収集
+    // 国コードIP収集
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts)?;
 
     // AS番号からIP集合を収集
     let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
     let (as_ips_v4, as_ips_v6) = collect_as_ips(&as_strings).await?;
 
-    // オーバーラップを計算
+    // 重複を探す
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
 
-    // 結果をファイルに書き出し
+    // 結果をファイル出力
     write_overlap_result(
         &country_codes,
         &as_strings,
@@ -41,7 +40,6 @@ pub async fn run_overlap(
     Ok(())
 }
 
-/// 引数バリデーション
 fn validate_args(args: &Cli) -> Result<(Vec<String>, Vec<u32>), Box<dyn Error + Send + Sync>> {
     let country_codes = args
         .country_codes
@@ -70,7 +68,7 @@ fn collect_country_ips(
     Ok((c_v4, c_v6))
 }
 
-/// AS番号からIPを収集
+/// AS番号からIPを収集 (1回のwhois呼び出しでv4/v6同時取得)
 async fn collect_as_ips(
     as_strings: &[String],
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn Error + Send + Sync>> {
@@ -78,8 +76,8 @@ async fn collect_as_ips(
     let mut a_v6 = BTreeSet::new();
 
     for asn in as_strings {
-        let v4set = get_ips_for_as(asn, IpFamily::V4).await?;
-        let v6set = get_ips_for_as(asn, IpFamily::V6).await?;
+        // get_ips_for_as_onceは自作の関数
+        let (v4set, v6set) = get_ips_for_as_once(asn).await?;
         a_v4.extend(v4set);
         a_v6.extend(v6set);
     }
@@ -93,7 +91,6 @@ fn calculate_overlaps(
 ) -> BTreeSet<IpNet> {
     let overlaps_v4 = find_overlaps(&country_v4, &as_v4);
     let overlaps_v6 = find_overlaps(&country_v6, &as_v6);
-
     overlaps_v4.into_iter().chain(overlaps_v6).collect()
 }
 
