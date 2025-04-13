@@ -11,7 +11,7 @@ pub async fn run_as_numbers(
     // u32 -> "ASxxxx" 形式の文字列へ
     let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
 
-    // asn.rs 内の関数を呼び出す
+    // asn.rs内の非同期関数を呼ぶ
     process_as_numbers(&as_strings, mode, output_format).await?;
     Ok(())
 }

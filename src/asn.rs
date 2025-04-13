@@ -90,13 +90,15 @@ pub async fn process_as_numbers(
                     if v4set.is_empty() {
                         println!("[asn] No IPv4 routes found for {}", as_number);
                     } else {
-                        write_as_ip_list_to_file(&as_number, IpFamily::V4, &v4set, &mode, format)?;
+                        write_as_ip_list_to_file(&as_number, IpFamily::V4, &v4set, &mode, format)
+                            .await?;
                     }
 
                     if v6set.is_empty() {
                         println!("[asn] No IPv6 routes found for {}", as_number);
                     } else {
-                        write_as_ip_list_to_file(&as_number, IpFamily::V6, &v6set, &mode, format)?;
+                        write_as_ip_list_to_file(&as_number, IpFamily::V6, &v6set, &mode, format)
+                            .await?;
                     }
                 }
                 Err(e) => eprintln!("[asn] Error processing {}: {}", as_number, e),

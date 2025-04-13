@@ -41,11 +41,11 @@ $ fire-scope -c jp us
 ```
 
 ```bash
-$ fire-scope -a AS0000 AS1234
+$ fire-scope -a 0000 1234
 ```
 
 ```bash
-$ fire-scope -c jp us -a AS0000 AS1234 -o
+$ fire-scope -c jp us -a 0000 1234 -o
 ```
 
 ### Options

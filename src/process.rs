@@ -1,5 +1,5 @@
 use crate::common::OutputFormat;
-use crate::output::write_ip_lists_to_files;
+use crate::output::write_ip_lists_to_files; // これが async に
 use crate::parse::{parse_all_country_codes, parse_ip_lines};
 use ipnet::IpNet;
 use std::collections::{BTreeSet, HashMap};
@@ -8,24 +8,24 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 
 /// 指定された国コードと、ダウンロード済みのRIRファイル文字列から
-/// IPアドレスをパースしてファイル書き込みまで実行する。
+/// IPアドレスをパースしてファイル書き込みまで実行する
 pub async fn process_country_code(
     country_code: &str,
     rir_texts: &[String],
     mode: &str,
     output_format: OutputFormat,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (ipv4_set, ipv6_set) = parse_and_collect_ips(country_code, rir_texts)?;
     // 結果をファイルに書き出す
-    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, mode, output_format)?;
+    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, mode, output_format).await?;
     Ok(())
 }
 
-/// 全RIRテキストから、指定国コードに合致するIPアドレスをすべて集約し、BTreeSetとして返す。
+/// 全RIRテキストから、指定国コードに合致するIPアドレスをすべて集約し、BTreeSetとして返す
 pub fn parse_and_collect_ips(
     country_code: &str,
     rir_texts: &[String],
-) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn Error + Send + Sync>> {
     let mut ipv4_vec = Vec::new();
     let mut ipv6_vec = Vec::new();
 
@@ -51,13 +51,13 @@ pub fn parse_and_collect_ips(
     Ok((ipv4_set, ipv6_set))
 }
 
-/// パース済みの国コードマップから特定の国コードのIPアドレスを取得し、ファイルに書き出す。
+/// パース済みの国コードマップから特定の国コードのIPアドレスを取得し、ファイルに書き出す
 pub async fn process_country_code_from_map(
     country_code: &str,
     country_map: &HashMap<String, (Vec<IpNet>, Vec<IpNet>)>,
     mode: &str,
     output_format: OutputFormat,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let upper_code = country_code.to_uppercase();
 
     // マップから該当する国コードのIPアドレスを取得
@@ -75,21 +75,20 @@ pub async fn process_country_code_from_map(
     // ソートとBTreeSetへの変換
     let mut ipv4_sorted = ipv4_vec.clone();
     let mut ipv6_sorted = ipv6_vec.clone();
-
     ipv4_sorted.sort();
     ipv6_sorted.sort();
 
     let ipv4_set = ipv4_sorted.into_iter().collect::<BTreeSet<_>>();
     let ipv6_set = ipv6_sorted.into_iter().collect::<BTreeSet<_>>();
 
-    // 結果をファイルに書き出す
-    write_ip_lists_to_files(&upper_code, &ipv4_set, &ipv6_set, mode, output_format)?;
+    // 非同期ファイル出力
+    write_ip_lists_to_files(&upper_code, &ipv4_set, &ipv6_set, mode, output_format).await?;
 
     Ok(())
 }
 
 /// 全RIRテキストから全ての国コードに対するIPアドレスをパースし、
-/// 指定された国コードのリストに対応するIPアドレスをファイルに書き出す。
+/// 指定された国コードのリストに対応するIPアドレスをファイルに書き出す
 pub async fn process_all_country_codes(
     country_codes: &[String],
     rir_texts: &[String],
@@ -105,7 +104,6 @@ pub async fn process_all_country_codes(
         }
     };
 
-    // Arc で包む（大きなマップを参照カウントで共有する）
     let country_map = Arc::new(country_map);
 
     // 各国コードに対して非同期タスクを起動
@@ -114,7 +112,6 @@ pub async fn process_all_country_codes(
         let code_clone = code.clone();
         let mode_clone = mode.to_string();
         let format_clone = output_format;
-        // Arcの参照カウントを増やしてクローン
         let map_arc = Arc::clone(&country_map);
 
         let handle = tokio::spawn(async move {

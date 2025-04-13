@@ -30,13 +30,14 @@ pub async fn run_overlap(
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
 
     // 結果をファイル出力
-    write_overlap_result(
-        &country_codes,
-        &as_strings,
+    write_overlap_to_file(
+        &country_codes.join("_").to_uppercase(),
+        &as_strings.join("_"),
         &overlap_nets,
         &args.mode,
         output_format,
-    )?;
+    )
+    .await?;
     Ok(())
 }
 
@@ -92,32 +93,4 @@ fn calculate_overlaps(
     let overlaps_v4 = find_overlaps(&country_v4, &as_v4);
     let overlaps_v6 = find_overlaps(&country_v6, &as_v6);
     overlaps_v4.into_iter().chain(overlaps_v6).collect()
-}
-
-/// ファイル出力
-fn write_overlap_result(
-    countries: &[String],
-    as_strings: &[String],
-    overlap_nets: &BTreeSet<IpNet>,
-    mode: &str,
-    output_format: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if overlap_nets.is_empty() {
-        println!(
-            "[overlap] No overlap found for countries={:?} and AS numbers={:?}",
-            countries, as_strings
-        );
-        return Ok(());
-    }
-
-    let combined_country = countries.join("_").to_uppercase();
-    let combined_asn = as_strings.join("_");
-    write_overlap_to_file(
-        &combined_country,
-        &combined_asn,
-        overlap_nets,
-        mode,
-        output_format,
-    )?;
-    Ok(())
 }

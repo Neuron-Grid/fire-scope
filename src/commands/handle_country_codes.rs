@@ -12,10 +12,10 @@ pub async fn run_country_codes(
     mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // RIRファイルをすべてダウンロードしてメモリ上に保持
     let rir_texts = download_all_rir_files(client, RIR_URLS).await?;
 
     // 全ての国コードに対するIPアドレスを一度にパースして処理
+    // process_all_country_codes で非同期ファイル書き込みを行う
     if let Err(e) = process_all_country_codes(country_codes, &rir_texts, mode, output_format).await
     {
         eprintln!("国コード処理中にエラーが発生しました: {}", e);
@@ -26,7 +26,7 @@ pub async fn run_country_codes(
 }
 
 /// RIRファイルをすべてダウンロードして文字列ベクタとして返す
-async fn download_all_rir_files(
+pub async fn download_all_rir_files(
     client: &Client,
     urls: &[&str],
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
