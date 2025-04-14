@@ -1,6 +1,7 @@
 use crate::asn::get_ips_for_as_once;
 use crate::cli::Cli;
 use crate::common::OutputFormat;
+use crate::error::AppError;
 use crate::output::write_overlap_to_file;
 use crate::overlap::find_overlaps;
 use crate::process::parse_and_collect_ips;
@@ -8,28 +9,21 @@ use crate::rir_download::download_all_rir_files;
 use ipnet::IpNet;
 use reqwest::Client;
 use std::collections::BTreeSet;
-use std::error::Error;
 
-/// --overlap が指定された場合に呼ばれる処理
 pub async fn run_overlap(
     args: &Cli,
     client: &Client,
     output_format: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), AppError> {
     let (country_codes, as_numbers) = validate_args(args)?;
     let rir_texts = download_all_rir_files(client).await?;
 
-    // 国コードIP収集
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts)?;
-
-    // AS番号からIP集合を収集
     let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
     let (as_ips_v4, as_ips_v6) = collect_as_ips(&as_strings).await?;
 
-    // 重複を探す
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
 
-    // 結果をファイル出力
     write_overlap_to_file(
         &country_codes.join("_").to_uppercase(),
         &as_strings.join("_"),
@@ -41,23 +35,20 @@ pub async fn run_overlap(
     Ok(())
 }
 
-fn validate_args(args: &Cli) -> Result<(Vec<String>, Vec<u32>), Box<dyn Error + Send + Sync>> {
-    let country_codes = args
-        .country_codes
-        .clone()
-        .ok_or("Error: --overlap requires --country <codes>")?;
-    let as_numbers = args
-        .as_numbers
-        .clone()
-        .ok_or("Error: --overlap requires --as-number <numbers>")?;
+fn validate_args(args: &Cli) -> Result<(Vec<String>, Vec<u32>), AppError> {
+    let country_codes = args.country_codes.clone().ok_or_else(|| {
+        AppError::InvalidInput("Error: --overlap requires --country <codes>".into())
+    })?;
+    let as_numbers = args.as_numbers.clone().ok_or_else(|| {
+        AppError::InvalidInput("Error: --overlap requires --as-number <numbers>".into())
+    })?;
     Ok((country_codes, as_numbers))
 }
 
-/// 国コードからIPを収集
 fn collect_country_ips(
     country_codes: &[String],
     rir_texts: &[String],
-) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn Error + Send + Sync>> {
+) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     let mut c_v4 = BTreeSet::new();
     let mut c_v6 = BTreeSet::new();
 
@@ -69,15 +60,13 @@ fn collect_country_ips(
     Ok((c_v4, c_v6))
 }
 
-/// AS番号からIPを収集 (1回のwhois呼び出しでv4/v6同時取得)
 async fn collect_as_ips(
     as_strings: &[String],
-) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn Error + Send + Sync>> {
+) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     let mut a_v4 = BTreeSet::new();
     let mut a_v6 = BTreeSet::new();
 
     for asn in as_strings {
-        // get_ips_for_as_onceは自作の関数
         let (v4set, v6set) = get_ips_for_as_once(asn).await?;
         a_v4.extend(v4set);
         a_v6.extend(v6set);
@@ -85,7 +74,6 @@ async fn collect_as_ips(
     Ok((a_v4, a_v6))
 }
 
-/// オーバーラップ計算
 fn calculate_overlaps(
     (country_v4, country_v6): (BTreeSet<IpNet>, BTreeSet<IpNet>),
     (as_v4, as_v6): (BTreeSet<IpNet>, BTreeSet<IpNet>),

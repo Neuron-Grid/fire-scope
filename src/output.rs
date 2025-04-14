@@ -1,8 +1,9 @@
 use crate::common::{IpFamily, OutputFormat};
+use crate::error::AppError;
 use crate::output_common::{make_header, write_list_nft, write_list_txt};
 use chrono::Local;
 use ipnet::IpNet;
-use std::{collections::BTreeSet, error::Error};
+use std::collections::BTreeSet;
 
 /// IPv4/IPv6リストをファイルに書き出す
 /// 国コード用
@@ -12,7 +13,7 @@ pub async fn write_ip_lists_to_files(
     ipv6_list: &BTreeSet<IpNet>,
     mode: &str,
     format_enum: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), AppError> {
     let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     match format_enum {
@@ -42,7 +43,7 @@ pub async fn write_ip_lists_to_files(
     Ok(())
 }
 
-/// IPv4/IPv6リストをファイルに書き出す。
+/// IPv4/IPv6リストをファイルに書き出す
 /// AS番号用
 pub async fn write_as_ip_list_to_file(
     as_number: &str,
@@ -50,7 +51,7 @@ pub async fn write_as_ip_list_to_file(
     ipnets: &BTreeSet<IpNet>,
     mode: &str,
     format_enum: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<(), AppError> {
     let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let header = make_header(&now_str, "N/A", as_number);
 
@@ -78,15 +79,15 @@ pub async fn write_as_ip_list_to_file(
 }
 
 /// 国コード+AS番号の重複CIDRリストを書き出す
-/// Overlap用
 pub async fn write_overlap_to_file(
     country_code: &str,
     as_number: &str,
     overlaps: &BTreeSet<IpNet>,
     mode: &str,
     format_enum: OutputFormat,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // IPv4 / IPv6 を仕分け
+) -> Result<(), AppError> {
+    use chrono::Local;
+
     let overlaps_v4: BTreeSet<IpNet> = overlaps
         .iter()
         .cloned()
@@ -107,48 +108,33 @@ pub async fn write_overlap_to_file(
         return Ok(());
     }
 
-    // ファイル名などの準備
     match format_enum {
         OutputFormat::Txt => {
-            // IPv4
             if !overlaps_v4.is_empty() {
                 let filename_v4 = format!("overlap_{}_{}_IPv4.txt", country_code, as_number);
                 let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let header_v4 = make_header(&now_str, country_code, as_number);
                 write_list_txt(&filename_v4, &overlaps_v4, mode, &header_v4).await?;
-                println!("[overlap] Wrote/append IPv4 overlaps to: {}", filename_v4);
             }
-            // IPv6
             if !overlaps_v6.is_empty() {
                 let filename_v6 = format!("overlap_{}_{}_IPv6.txt", country_code, as_number);
                 let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let header_v6 = make_header(&now_str, country_code, as_number);
                 write_list_txt(&filename_v6, &overlaps_v6, mode, &header_v6).await?;
-                println!("[overlap] Wrote/append IPv6 overlaps to: {}", filename_v6);
             }
         }
         OutputFormat::Nft => {
-            // IPv4
             if !overlaps_v4.is_empty() {
                 let filename_v4 = format!("overlap_{}_{}_IPv4.nft", country_code, as_number);
                 let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let header_v4 = make_header(&now_str, country_code, as_number);
                 write_list_nft(&filename_v4, &overlaps_v4, mode, &header_v4).await?;
-                println!(
-                    "[overlap] Wrote/append IPv4 overlaps nft to: {}",
-                    filename_v4
-                );
             }
-            // IPv6
             if !overlaps_v6.is_empty() {
                 let filename_v6 = format!("overlap_{}_{}_IPv6.nft", country_code, as_number);
                 let now_str = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                 let header_v6 = make_header(&now_str, country_code, as_number);
                 write_list_nft(&filename_v6, &overlaps_v6, mode, &header_v6).await?;
-                println!(
-                    "[overlap] Wrote/append IPv6 overlaps nft to: {}",
-                    filename_v6
-                );
             }
         }
     }

@@ -1,9 +1,10 @@
+use crate::error::AppError;
 use ipnet::IpNet;
 use std::{collections::BTreeSet, path::Path};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
-/// 汎用ヘッダー生成: こちらは非同期要素がないのでそのまま
+/// 汎用ヘッダー生成
 pub fn make_header(now_str: &str, country_code: &str, as_number: &str) -> String {
     format!(
         "# Generated at: {}\n# Country Code: {}\n# AS Number: {}\n\n",
@@ -11,13 +12,12 @@ pub fn make_header(now_str: &str, country_code: &str, as_number: &str) -> String
     )
 }
 
-/// TXT出力用の共通ヘルパー
 pub async fn write_list_txt<P: AsRef<Path>>(
     path: P,
     ipnets: &BTreeSet<IpNet>,
     mode: &str,
     header: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), AppError> {
     let body = ipnets
         .iter()
         .map(|net| net.to_string())
@@ -28,30 +28,27 @@ pub async fn write_list_txt<P: AsRef<Path>>(
 
     match mode {
         "append" => {
-            // 非同期OpenOptions
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)
-                .await?;
+                .await?; // io::Error -> AppError::Io
             file.write_all(content.as_bytes()).await?;
         }
         _ => {
-            // まるごと書き込む場合
-            fs::write(path, &content).await?;
+            fs::write(path, &content).await?; // 同上
         }
     }
 
     Ok(())
 }
 
-/// NFT 出力用の共通ヘルパー
 pub async fn write_list_nft<P: AsRef<Path>>(
     path: P,
     ipnets: &BTreeSet<IpNet>,
     mode: &str,
     header: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), AppError> {
     let file_path = path.as_ref();
     let define_name = file_path
         .file_stem()

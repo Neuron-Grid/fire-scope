@@ -3,6 +3,7 @@ pub mod cli;
 pub mod commands;
 pub mod common;
 pub mod constants;
+pub mod error;
 pub mod fetch;
 pub mod ipv4_utils;
 pub mod output;

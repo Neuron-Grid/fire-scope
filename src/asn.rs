@@ -1,13 +1,14 @@
 use crate::common::{IpFamily, OutputFormat};
+use crate::error::AppError;
 use crate::output::write_as_ip_list_to_file;
 use ipnet::IpNet;
-use std::{collections::BTreeSet, error::Error, process::Stdio, sync::Arc};
+use std::{collections::BTreeSet, process::Stdio, sync::Arc};
 use tokio::{process::Command, sync::Semaphore};
 
 /// 1つのAS番号に対し、whoisを1回だけ実行し、IPv4/IPv6ルートを同時取得して返す。
 pub async fn get_ips_for_as_once(
     as_number: &str,
-) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), Box<dyn Error + Send + Sync>> {
+) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     let output = Command::new("whois")
         .arg("-h")
         .arg("whois.radb.net")
@@ -15,13 +16,16 @@ pub async fn get_ips_for_as_once(
         .arg(format!("-i origin {}", as_number))
         .stderr(Stdio::inherit())
         .output()
-        .await?;
+        .await?; // io::Error -> AppError::Io
 
     if !output.status.success() {
-        return Err(format!("whois command failed for {}", as_number).into());
+        return Err(AppError::WhoisExecutionError(format!(
+            "whois command failed for {}",
+            as_number
+        )));
     }
 
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let stdout_str = String::from_utf8(output.stdout)?; // FromUtf8Error -> AppError::Utf8
 
     // ここでIPv4, IPv6に仕分け
     let mut v4s = BTreeSet::new();
@@ -32,7 +36,6 @@ pub async fn get_ips_for_as_once(
             // 例: "route: 192.0.2.0/24"
             if let Some(ip_str) = line.split_whitespace().nth(1) {
                 if let Ok(ip) = ip_str.parse::<IpNet>() {
-                    // ip.is_ipv4() の代わりにパターンマッチ
                     if let IpNet::V4(_) = ip {
                         v4s.insert(ip);
                     }
@@ -66,11 +69,10 @@ pub async fn process_as_numbers(
     as_numbers: &[String],
     mode: &str,
     output_format: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // 同時に叩くwhoisコマンドの上限。必要に応じて調整
+) -> Result<(), AppError> {
+    // 同時に叩くwhoisコマンドの上限
     let max_concurrent = 5;
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
-
     let mut handles = Vec::new();
 
     for as_number in as_numbers {
@@ -81,19 +83,17 @@ pub async fn process_as_numbers(
 
         // 各ASを並行処理
         let handle = tokio::spawn(async move {
-            // セマフォで同時実行数を制限
             let _permit = sem_clone.acquire_owned().await?;
-
+            // acquire_owned が失敗することは少ないが、念のため
+            // SemaphoreError などを表現したければ custom で包む
             match get_ips_for_as_once(&as_number).await {
                 Ok((v4set, v6set)) => {
-                    // IPv4/IPv6をファイルに書き出す
                     if v4set.is_empty() {
                         println!("[asn] No IPv4 routes found for {}", as_number);
                     } else {
                         write_as_ip_list_to_file(&as_number, IpFamily::V4, &v4set, &mode, format)
                             .await?;
                     }
-
                     if v6set.is_empty() {
                         println!("[asn] No IPv6 routes found for {}", as_number);
                     } else {
@@ -103,14 +103,14 @@ pub async fn process_as_numbers(
                 }
                 Err(e) => eprintln!("[asn] Error processing {}: {}", as_number, e),
             };
-
-            Ok::<(), Box<dyn Error + Send + Sync>>(())
+            Ok::<(), AppError>(())
         });
         handles.push(handle);
     }
 
     // 全タスクが完了するのを待機
     for h in handles {
+        // tokio::spawn の結果を二重アンラップ
         h.await??;
     }
 
