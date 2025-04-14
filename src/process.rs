@@ -25,17 +25,25 @@ pub fn parse_and_collect_ips(
     let mut ipv4_vec = Vec::new();
     let mut ipv6_vec = Vec::new();
 
+    // RIRファイル群から、指定された国コードに該当するIPを収集
     for text in rir_texts {
         let (v4, v6) = parse_ip_lines(text, country_code)?;
         ipv4_vec.extend(v4);
         ipv6_vec.extend(v6);
     }
 
+    // 取得したIPv4/IPv6をソート
     ipv4_vec.sort();
     ipv6_vec.sort();
 
-    let ipv4_set = ipv4_vec.into_iter().collect::<BTreeSet<_>>();
-    let ipv6_set = ipv6_vec.into_iter().collect::<BTreeSet<_>>();
+    // 同一・隣接するプレフィックスをまとめる
+    let agg_v4 = IpNet::aggregate(&ipv4_vec);
+    let agg_v6 = IpNet::aggregate(&ipv6_vec);
+
+    // BTreeSet にまとめる
+    // 重複除去や順序保持のため
+    let ipv4_set = agg_v4.into_iter().collect::<BTreeSet<_>>();
+    let ipv6_set = agg_v6.into_iter().collect::<BTreeSet<_>>();
 
     Ok((ipv4_set, ipv6_set))
 }

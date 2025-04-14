@@ -1,40 +1,52 @@
 use crate::constants::RIR_URLS;
 use crate::error::AppError;
 use crate::fetch::fetch_with_retry;
+use futures::future::join_all;
 use reqwest::Client;
 
-/// RIRファイルをすべてダウンロードして文字列ベクタとして返す。
-pub async fn download_all_rir_files(client: &Client) -> Result<Vec<String>, AppError> {
-    use futures::future::join_all;
-
+/// RIRファイルをすべてダウンロードし、
+/// (成功したテキストのVec, 失敗したURLのVec) を返す。
+pub async fn download_all_rir_files(
+    client: &Client,
+) -> Result<(Vec<String>, Vec<String>), AppError> {
     let mut handles = Vec::new();
+    let mut urls = Vec::new();
+
     for url in RIR_URLS {
         let url_owned = url.to_string();
         let client_clone = client.clone();
-        // 非同期で複数URLを並列取得
+        urls.push(url_owned.clone());
+
+        // fetch_with_retry() をtokio::spawnで並列実行
         handles.push(tokio::spawn(async move {
-            // ここは tokio::spawn の中なので Result<_, AppError>を返す
-            // 失敗すればErr(...)をそのまま返す。
             fetch_with_retry(&client_clone, &url_owned).await
         }));
     }
 
     let results = join_all(handles).await;
-    let mut rir_texts = Vec::new();
+    let mut success_texts = Vec::new();
+    let mut fail_urls = Vec::new();
 
-    for res in results {
+    // 各タスクの結果をまとめる
+    for (i, res) in results.into_iter().enumerate() {
         match res {
             Ok(Ok(text)) => {
-                rir_texts.push(text);
+                // 取得成功
+                success_texts.push(text);
             }
             Ok(Err(e)) => {
-                eprintln!("HTTP取得エラー: {}", e);
+                // HTTPやパースなどのエラー
+                eprintln!("HTTP取得エラー: {} (URL={})", e, urls[i]);
+                fail_urls.push(urls[i].clone());
             }
             Err(e) => {
-                eprintln!("タスク失敗: {}", e);
+                // タスク自体が失敗
+                eprintln!("タスク失敗: {} (URL={})", e, urls[i]);
+                fail_urls.push(urls[i].clone());
             }
         }
     }
 
-    Ok(rir_texts)
+    // 成功・失敗をまとめて呼び出し元に返す
+    Ok((success_texts, fail_urls))
 }

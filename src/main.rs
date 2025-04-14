@@ -12,6 +12,7 @@ async fn main() -> Result<(), AppError> {
 }
 
 async fn run(args: Cli) -> Result<(), AppError> {
+    // HTTPクライアント
     let client = Client::new();
 
     let format_enum = match OutputFormat::from_str(&args.output_format) {
@@ -26,17 +27,25 @@ async fn run(args: Cli) -> Result<(), AppError> {
     };
 
     if args.overlap {
+        // Overlap mode
         fire_scope::commands::handle_overlap::run_overlap(&args, &client, format_enum).await?;
         return Ok(());
     }
 
     if let Some(as_list) = &args.as_numbers {
-        fire_scope::commands::handle_as_numbers::run_as_numbers(as_list, &args.mode, format_enum)
-            .await?;
+        // AS番号指定時
+        fire_scope::commands::handle_as_numbers::run_as_numbers(
+            &client,
+            as_list,
+            &args.mode,
+            format_enum,
+        )
+        .await?;
         return Ok(());
     }
 
     if let Some(country_codes) = &args.country_codes {
+        // 国コード指定時
         fire_scope::commands::handle_country_codes::run_country_codes(
             country_codes,
             &client,

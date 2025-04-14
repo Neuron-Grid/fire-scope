@@ -21,10 +21,6 @@ pub enum AppError {
     #[error("Parse error: {0}")]
     ParseError(String),
 
-    // WHOIS コマンドが実行自体に失敗した場合
-    #[error("Whois command error: {0}")]
-    WhoisExecutionError(String),
-
     // 特定の入力が不正だった場合など
     #[error("Invalid input: {0}")]
     InvalidInput(String),
