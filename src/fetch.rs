@@ -1,27 +1,18 @@
+use crate::error::AppError;
 use rand::Rng;
 use reqwest::Client;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// HTTP GETを1回だけ実行する。
-/// 成功時はレスポンスボディを文字列として返す。
-/// 失敗時はエラーを返す。
-async fn fetch_once(
-    client: &Client,
-    url: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
     let resp = client.get(url).send().await?;
     let text = resp.text().await?;
     Ok(text)
 }
 
-/// HTTP GETによるデータ取得を、リトライ+指数バックオフ付きで行う。
-/// 成功時はレスポンス文字列を返す。
-/// retry_attempts回失敗した場合、エラーを返す。
-pub async fn fetch_with_retry(
-    client: &Client,
-    url: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+/// HTTP GETによるデータ取得をリトライ+指数バックオフ付きで行う
+/// 失敗時はAppError::Other(...)を返す
+pub async fn fetch_with_retry(client: &Client, url: &str) -> Result<String, AppError> {
     let retry_attempts = 10;
 
     for i in 0..retry_attempts {
@@ -42,11 +33,11 @@ pub async fn fetch_with_retry(
         }
     }
 
-    Err(format!(
-        "Failed to fetch data from {} after {} attempts.",
+    // リトライ失敗
+    Err(AppError::Other(format!(
+        "Failed to fetch data from {} after {} attempts",
         url, retry_attempts
-    )
-    .into())
+    )))
 }
 
 /// 指数バックオフのスリープ時間を計算するヘルパー関数

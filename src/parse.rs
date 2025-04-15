@@ -1,3 +1,4 @@
+use crate::error::AppError;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -7,7 +8,7 @@ use std::net::Ipv4Addr;
 pub fn parse_ip_lines(
     text: &str,
     country_code: &str,
-) -> Result<(Vec<IpNet>, Vec<IpNet>), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Vec<IpNet>, Vec<IpNet>), AppError> {
     let mut ipv4_list = Vec::new();
     let mut ipv6_list = Vec::new();
 
@@ -24,16 +25,14 @@ pub fn parse_ip_lines(
         if params[1].eq_ignore_ascii_case(country_code) {
             let ip_type = params[2];
             match ip_type {
-                "ipv4" | "ipv6" => match parse_ip_params(&params) {
-                    Ok(nets) => {
-                        if ip_type == "ipv4" {
-                            ipv4_list.extend(nets);
-                        } else {
-                            ipv6_list.extend(nets);
-                        }
+                "ipv4" | "ipv6" => {
+                    let nets = parse_ip_params(&params)?;
+                    if ip_type == "ipv4" {
+                        ipv4_list.extend(nets);
+                    } else {
+                        ipv6_list.extend(nets);
                     }
-                    Err(e) => eprintln!("[parse_ip_lines] parse_ip_params error: {}", e),
-                },
+                }
                 _ => continue,
             }
         }
@@ -42,10 +41,8 @@ pub fn parse_ip_lines(
     Ok((ipv4_list, ipv6_list))
 }
 
-/// ip_typeを判別し、対応するパース関数を呼び出す。
-fn parse_ip_params(
-    params: &[&str],
-) -> Result<Vec<IpNet>, Box<dyn std::error::Error + Send + Sync>> {
+/// ip_typeを判別し、対応するパース関数を呼ぶ
+fn parse_ip_params(params: &[&str]) -> Result<Vec<IpNet>, AppError> {
     let ip_type = params[2];
     let start_str = params[3];
     let value_str = params[4];
@@ -58,28 +55,24 @@ fn parse_ip_params(
 }
 
 /// IPv4の範囲を細分化してCIDRブロック一覧を返す。
-fn parse_ipv4_range(
-    start_str: &str,
-    value_str: &str,
-) -> Result<Vec<IpNet>, Box<dyn std::error::Error + Send + Sync>> {
+fn parse_ipv4_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
     let start_v4 = start_str.parse::<Ipv4Addr>()?;
     let width = value_str.parse::<u64>()?;
     let start_num = u32::from(start_v4);
 
     let end_num = start_num
         .checked_add(width as u32)
-        .ok_or("IPv4 range is too large")?
+        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".to_string()))?
         .checked_sub(1)
-        .ok_or("Calculation error on IPv4 range")?;
+        .ok_or_else(|| AppError::ParseError("Calculation error on IPv4 range".to_string()))?;
 
     let mut cidrs = Vec::new();
     let mut current = start_num;
 
-    // ここで parse_ipv4::largest_ipv4_block を呼ぶか、
-    // あるいは ipv4_utils::largest_ipv4_block に切り替えてもOK。
     while current <= end_num {
         let max_size = crate::ipv4_utils::largest_ipv4_block(current, end_num);
-        let net = Ipv4Net::new(Ipv4Addr::from(current), max_size)?;
+        let net = Ipv4Net::new(Ipv4Addr::from(current), max_size)
+            .map_err(|e| AppError::ParseError(format!("Ipv4Net::new error: {}", e)))?;
         cidrs.push(IpNet::V4(net));
 
         let block_size = 1u32 << (32 - max_size);
@@ -90,21 +83,19 @@ fn parse_ipv4_range(
 }
 
 /// IPv6用のCIDRをパースして返す。
-fn parse_ipv6_range(
-    start_str: &str,
-    value_str: &str,
-) -> Result<Vec<IpNet>, Box<dyn std::error::Error + Send + Sync>> {
+fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
     let cidr_str = format!("{}/{}", start_str, value_str);
-    let net = cidr_str.parse::<Ipv6Net>()?;
+    let net = cidr_str
+        .parse::<Ipv6Net>()
+        .map_err(|e| AppError::ParseError(format!("Ipv6Net parse error: {}", e)))?;
     Ok(vec![IpNet::V6(net)])
 }
 
-/// 全RIRテキストから全ての国コードに対するIPアドレスをパースし、国コードをキーとするマップを返す。
-/// 戻り値: HashMap<国コード, (IPv4リスト, IPv6リスト)>
-type CountryIpMap = HashMap<String, (Vec<IpNet>, Vec<IpNet>)>;
+/// 全RIRテキストから全ての国コードに対するIPアドレスをパースし、
+/// HashMap<国コード, (IPv4リスト, IPv6リスト)> を返す。
 pub fn parse_all_country_codes(
     rir_texts: &[String],
-) -> Result<CountryIpMap, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HashMap<String, (Vec<IpNet>, Vec<IpNet>)>, AppError> {
     let mut country_map: HashMap<String, (Vec<IpNet>, Vec<IpNet>)> = HashMap::new();
 
     for text in rir_texts {
@@ -122,21 +113,17 @@ pub fn parse_all_country_codes(
             let ip_type = params[2];
 
             match ip_type {
-                "ipv4" | "ipv6" => match parse_ip_params(&params) {
-                    Ok(nets) => {
-                        let entry = country_map
-                            .entry(country_code)
-                            .or_insert((Vec::new(), Vec::new()));
-                        if ip_type == "ipv4" {
-                            entry.0.extend(nets);
-                        } else {
-                            entry.1.extend(nets);
-                        }
+                "ipv4" | "ipv6" => {
+                    let nets = parse_ip_params(&params)?;
+                    let entry = country_map
+                        .entry(country_code.clone())
+                        .or_insert((Vec::new(), Vec::new()));
+                    if ip_type == "ipv4" {
+                        entry.0.extend(nets);
+                    } else {
+                        entry.1.extend(nets);
                     }
-                    Err(e) => {
-                        eprintln!("[parse_all_country_codes] parse_ip_params error: {}", e)
-                    }
-                },
+                }
                 _ => continue,
             }
         }

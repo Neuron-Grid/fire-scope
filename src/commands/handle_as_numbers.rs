@@ -1,17 +1,16 @@
-use crate::asn::process_as_numbers;
+use crate::asn::process_as_numbers_no_rpki;
 use crate::common::OutputFormat;
-use std::error::Error;
+use crate::error::AppError;
+use reqwest::Client;
 
-/// AS番号リストを受け取り、文字列("ASxxxx") へ変換して実行するラッパ関数。
+/// ユーザーが指定した AS番号リストを受け取り、
+/// 内部で `asn::process_as_numbers_no_rpki` を呼び出す。
 pub async fn run_as_numbers(
+    client: &Client,
     as_numbers: &[u32],
     mode: &str,
     output_format: OutputFormat,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // u32 -> "ASxxxx" 形式の文字列へ
+) -> Result<(), AppError> {
     let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
-
-    // asn.rs内の非同期関数を呼ぶ
-    process_as_numbers(&as_strings, mode, output_format).await?;
-    Ok(())
+    process_as_numbers_no_rpki(client, &as_strings, mode, output_format).await
 }
