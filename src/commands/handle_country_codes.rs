@@ -1,7 +1,7 @@
 use crate::common::OutputFormat;
+use crate::common_download::download_all_rir_files;
 use crate::error::AppError;
 use crate::process::process_all_country_codes;
-use crate::rir_download::download_all_rir_files;
 use reqwest::Client;
 
 pub async fn run_country_codes(
