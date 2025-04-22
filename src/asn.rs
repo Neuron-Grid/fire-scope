@@ -1,57 +1,129 @@
 use crate::common::{IpFamily, OutputFormat};
+use crate::constants::RDAP_BASE_URLS;
 use crate::error::AppError;
 use crate::output::write_as_ip_list_to_file;
+use crate::rpki::rpki_filter::filter_valid_by_rpki;
 use ipnet::IpNet;
 use reqwest::Client;
-use std::{collections::BTreeSet, sync::Arc};
+use serde_json::Value;
+use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
 
-#[derive(serde::Deserialize)]
-struct RipeStatAnnouncedPrefixes {
-    data: AnnouncedPrefixesData,
-}
-
-#[derive(serde::Deserialize)]
-struct AnnouncedPrefixesData {
-    prefixes: Vec<AnnouncedPrefix>,
-}
-
-#[derive(serde::Deserialize)]
-struct AnnouncedPrefix {
-    prefix: String,
-}
-
-/// 1つのAS番号に対応するBGPルートを取得
-/// RIPEstat APIを使用
-/// RPKI検証なし
-pub async fn get_ips_for_as_once_no_rpki(
+/// RDAPでAS → (IPv4, IPv6)プレフィックスを取得し、RPKI VALIDのみ返す
+pub async fn get_prefixes_via_rdap(
     client: &Client,
     as_number: &str,
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
-    let url = format!(
-        "https://stat.ripe.net/data/announced-prefixes/data.json?resource={}",
-        as_number
-    );
-    let body = client.get(&url).send().await?.text().await?;
-    let parsed: RipeStatAnnouncedPrefixes = serde_json::from_str(&body)
-        .map_err(|e| AppError::ParseError(format!("Failed to parse RIPEstat JSON: {e}")))?;
+    let mut nets: Vec<IpNet> = Vec::new();
 
-    // 入力データからパース・集約する部分を分離し、イミュータブルデータの流れを明確化
-    let (v4s, v6s) = partition_and_parse_ipnets(&parsed.data.prefixes);
+    // RDAP を順に問い合わせ
+    for base in RDAP_BASE_URLS {
+        // ARINはOriginAS拡張を優先
+        let url = if base.contains("arin.net") {
+            format!("{base}/arin_originas0_networksbyoriginas/{as_number}")
+        } else {
+            format!("{base}/autnum/{as_number}")
+        };
 
-    // 集約
-    let aggregated_v4 = IpNet::aggregate(&v4s.iter().copied().collect::<Vec<_>>());
-    let aggregated_v6 = IpNet::aggregate(&v6s.iter().copied().collect::<Vec<_>>());
+        let resp = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
 
-    Ok((
-        aggregated_v4.into_iter().collect(),
-        aggregated_v6.into_iter().collect(),
-    ))
+        let json: Value = resp.json().await?;
+        if base.contains("arin.net") {
+            nets.extend(extract_prefixes_from_arin(&json)?);
+        } else {
+            nets.extend(extract_prefixes_generic(&json)?);
+        }
+        // 取得できたら他のRDAPはスキップ
+        if !nets.is_empty() {
+            break;
+        }
+    }
+
+    // RPKI VALIDのみ残す
+    let nets_valid = filter_rpki_valid(as_number, &nets).await?;
+    let (v4set, v6set) = dedup_and_partition(&nets_valid);
+    Ok((v4set, v6set))
 }
 
-/// 複数のAS番号を指定し BGPルートを並行取得+ファイル出力
-/// RPKI検証なし
-pub async fn process_as_numbers_no_rpki(
+/// Vec<IpNet>をRPKI VALIDのみ抽出
+async fn filter_rpki_valid(as_number: &str, nets: &[IpNet]) -> Result<Vec<IpNet>, AppError> {
+    let asn_num = as_number.trim_start_matches("AS").parse::<u32>()?;
+    filter_valid_by_rpki(asn_num, nets).await
+}
+
+/// ARIN OriginAS RDAP応答からCIDR抽出
+fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
+    let mut nets = Vec::new();
+    if let Some(arr) = v
+        .get("arin_originas0_networkSearchResults")
+        .and_then(|v| v.as_array())
+    {
+        for obj in arr {
+            let (prefix_key, len_key) = match obj.get("ipVersion").and_then(|v| v.as_str()) {
+                Some("v4") => ("v4prefix", "length"),
+                Some("v6") => ("v6prefix", "length"),
+                _ => continue,
+            };
+            if let (Some(prefix), Some(len)) = (
+                obj.get(prefix_key).and_then(|v| v.as_str()),
+                obj.get(len_key),
+            ) {
+                let cidr = format!("{}/{}", prefix, len);
+                if let Ok(net) = IpNet::from_str(&cidr) {
+                    nets.push(net);
+                }
+            }
+        }
+    }
+    Ok(nets)
+}
+
+/// 汎用RDAP(cidr0 拡張)応答からCIDR抽出
+fn extract_prefixes_generic(v: &Value) -> Result<Vec<IpNet>, AppError> {
+    let mut nets = Vec::new();
+    if let Some(arr) = v.get("cidr0_cidrs").and_then(|v| v.as_array()) {
+        for obj in arr {
+            let key = if obj.get("v4prefix").is_some() {
+                "v4prefix"
+            } else {
+                "v6prefix"
+            };
+            if let (Some(prefix), Some(len)) =
+                (obj.get(key).and_then(|v| v.as_str()), obj.get("length"))
+            {
+                let cidr = format!("{}/{}", prefix, len);
+                if let Ok(net) = IpNet::from_str(&cidr) {
+                    nets.push(net);
+                }
+            }
+        }
+    }
+    Ok(nets)
+}
+
+/// Vec<IpNet> → (IPv4, IPv6)集合に分割しaggregate
+fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
+    let agg = IpNet::aggregate(&nets.to_vec());
+    let mut v4 = BTreeSet::new();
+    let mut v6 = BTreeSet::new();
+    for net in agg {
+        match net {
+            IpNet::V4(_) => {
+                v4.insert(net);
+            }
+            IpNet::V6(_) => {
+                v6.insert(net);
+            }
+        }
+    }
+    (v4, v6)
+}
+
+/// 複数ASを並列取得してファイル出力
+pub async fn process_as_numbers(
     client: &Client,
     as_numbers: &[String],
     mode: &str,
@@ -60,81 +132,35 @@ pub async fn process_as_numbers_no_rpki(
     let max_concurrent = 5;
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-    // 非同期タスクを作成
     let handles = as_numbers
         .iter()
-        .map(|as_number| {
-            let as_number_clone = as_number.clone();
-            let mode_clone = mode.to_string();
-            let format_clone = output_format;
-            let sem_clone = semaphore.clone();
-            let client_clone = client.clone();
-
+        .map(|asn| {
+            let asn_cloned = asn.clone();
+            let mode_c = mode.to_string();
+            let fmt_c = output_format;
+            let client_c = client.clone();
+            let sem_c = semaphore.clone();
             tokio::spawn(async move {
-                let _permit = sem_clone.acquire_owned().await?;
-                match get_ips_for_as_once_no_rpki(&client_clone, &as_number_clone).await {
-                    Ok((v4set, v6set)) => {
-                        // IPv4をファイル出力orログ表示
-                        write_ip_list(
-                            &as_number_clone,
-                            IpFamily::V4,
-                            &v4set,
-                            &mode_clone,
-                            format_clone,
-                        )
-                        .await?;
-
-                        // IPv6をファイル出力orログ表示
-                        write_ip_list(
-                            &as_number_clone,
-                            IpFamily::V6,
-                            &v6set,
-                            &mode_clone,
-                            format_clone,
-                        )
-                        .await?;
+                let _permit = sem_c.acquire_owned().await?;
+                match get_prefixes_via_rdap(&client_c, &asn_cloned).await {
+                    Ok((v4, v6)) => {
+                        write_ip_list(&asn_cloned, IpFamily::V4, &v4, &mode_c, fmt_c).await?;
+                        write_ip_list(&asn_cloned, IpFamily::V6, &v6, &mode_c, fmt_c).await?;
                     }
-                    Err(e) => eprintln!("Error processing {as_number_clone}: {e}"),
+                    Err(e) => eprintln!("Error processing {asn_cloned}: {e}"),
                 };
                 Ok::<(), AppError>(())
             })
         })
         .collect::<Vec<_>>();
 
-    // タスクの完了を待機
-    for handle in handles {
-        handle.await??;
+    for h in handles {
+        h.await??;
     }
-
     Ok(())
 }
 
-/// AnnouncedPrefix のリストからIpNetをパースし、IPv4とIPv6を分割して返す
-fn partition_and_parse_ipnets(prefixes: &[AnnouncedPrefix]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
-    // イテレータとfilter_mapでエラーを無視しつつパース
-    let ipnets = prefixes
-        .iter()
-        .filter_map(|pfx| pfx.prefix.parse::<IpNet>().ok());
-
-    // partitionは(集めたい要素, それ以外の要素)に分割する
-    let mut v4s = BTreeSet::new();
-    let mut v6s = BTreeSet::new();
-
-    for ipnet in ipnets {
-        match ipnet {
-            IpNet::V4(_) => {
-                v4s.insert(ipnet);
-            }
-            IpNet::V6(_) => {
-                v6s.insert(ipnet);
-            }
-        }
-    }
-    (v4s, v6s)
-}
-
-/// 指定されたIPアドレスリストをファイルに書き出す。
-/// 空の場合はログ表示のみを行う。
+/// ファイル書き出しヘルパ
 async fn write_ip_list(
     as_number: &str,
     ip_family: IpFamily,
@@ -143,14 +169,7 @@ async fn write_ip_list(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     if ip_set.is_empty() {
-        match ip_family {
-            IpFamily::V4 => {
-                println!("No IPv4 routes for {as_number}");
-            }
-            IpFamily::V6 => {
-                println!("No IPv6 routes for {as_number}");
-            }
-        }
+        println!("No {} routes for {}", ip_family.as_str(), as_number);
     } else {
         write_as_ip_list_to_file(as_number, ip_family, ip_set, mode, output_format).await?;
     }

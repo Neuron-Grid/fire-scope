@@ -1,112 +1,144 @@
 use crate::common::OutputFormat;
 use crate::error::AppError;
+use crate::ipv4_utils::largest_ipv4_block;
 use crate::output::write_ip_lists_to_files;
-use crate::parse::{parse_all_country_codes, parse_ip_lines};
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::{BTreeSet, HashMap};
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+/// 単一国コードを処理し、結果ファイルを出力
 pub async fn process_country_code(
     country_code: &str,
     rir_texts: &[String],
     mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
-    let (ipv4_set, ipv6_set) = parse_and_collect_ips(country_code, rir_texts)?;
-    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, mode, output_format).await?;
-    Ok(())
+    // CPUバウンド部をTokioのブロッキングスレッドにオフロード
+    let (ipv4_set, ipv6_set) =
+        tokio::task::block_in_place(|| parse_and_collect_ips(country_code, rir_texts))?;
+
+    // I/Oはasyncのまま
+    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, mode, output_format).await
 }
 
-pub fn parse_and_collect_ips(
-    country_code: &str,
-    rir_texts: &[String],
-) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
-    let mut ipv4_vec = Vec::new();
-    let mut ipv6_vec = Vec::new();
-
-    // RIRファイル群から、指定された国コードに該当するIPを収集
-    for text in rir_texts {
-        let (v4, v6) = parse_ip_lines(text, country_code)?;
-        ipv4_vec.extend(v4);
-        ipv6_vec.extend(v6);
-    }
-
-    // 取得したIPv4/IPv6をソート
-    ipv4_vec.sort();
-    ipv6_vec.sort();
-
-    // 同一・隣接するプレフィックスをまとめる
-    let agg_v4 = IpNet::aggregate(&ipv4_vec);
-    let agg_v6 = IpNet::aggregate(&ipv6_vec);
-
-    // BTreeSet にまとめる
-    // 重複除去や順序保持のため
-    let ipv4_set = agg_v4.into_iter().collect::<BTreeSet<_>>();
-    let ipv6_set = agg_v6.into_iter().collect::<BTreeSet<_>>();
-
-    Ok((ipv4_set, ipv6_set))
-}
-
-/// マップから特定の国コードを抽出して書き出す
-pub async fn process_country_code_from_map(
-    country_code: &str,
-    country_map: &HashMap<String, (Vec<IpNet>, Vec<IpNet>)>,
-    mode: &str,
-    output_format: OutputFormat,
-) -> Result<(), AppError> {
-    let upper_code = country_code.to_uppercase();
-
-    let (ipv4_vec, ipv6_vec) = match country_map.get(&upper_code) {
-        Some(ip_lists) => ip_lists,
-        None => {
-            eprintln!(
-                "No IP address corresponding to the country code could be found: {}",
-                upper_code
-            );
-            return Ok(());
-        }
-    };
-
-    let mut ipv4_sorted = ipv4_vec.clone();
-    let mut ipv6_sorted = ipv6_vec.clone();
-    ipv4_sorted.sort();
-    ipv6_sorted.sort();
-
-    let ipv4_set = ipv4_sorted.into_iter().collect::<BTreeSet<_>>();
-    let ipv6_set = ipv6_sorted.into_iter().collect::<BTreeSet<_>>();
-
-    write_ip_lists_to_files(&upper_code, &ipv4_set, &ipv6_set, mode, output_format).await?;
-    Ok(())
-}
-
-/// 全ての国コードに対するIPアドレスをまとめてパースし、指定された国コードのみ書き出す
+/// 全RIRテキストから該当国コードのIP一覧を集約し、そのまま書き出し
 pub async fn process_all_country_codes(
     country_codes: &[String],
     rir_texts: &[String],
     mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
-    let country_map = parse_all_country_codes(rir_texts)?;
+    // 共有参照をArcで包む
+    // 重い文字列をコピーしない
+    let rir_arc = Arc::new(rir_texts.to_vec());
 
-    let country_map = Arc::new(country_map);
-
+    // 国コードごとに並列タスクを生成
     let mut tasks: Vec<JoinHandle<Result<(), AppError>>> = Vec::new();
     for code in country_codes {
-        let code_clone = code.clone();
-        let mode_clone = mode.to_string();
-        let format_clone = output_format;
-        let map_arc = Arc::clone(&country_map);
+        let code_cloned = code.clone();
+        let rir_cloned = Arc::clone(&rir_arc);
+        let mode_cloned = mode.to_string();
 
-        let handle = tokio::spawn(async move {
-            process_country_code_from_map(&code_clone, &map_arc, &mode_clone, format_clone).await
-        });
-        tasks.push(handle);
+        tasks.push(tokio::spawn(async move {
+            process_country_code(&code_cloned, &rir_cloned, &mode_cloned, output_format).await
+        }));
     }
 
-    for t in tasks {
-        t.await??;
+    // すべてのタスクを待機
+    for handle in tasks {
+        handle.await??;
     }
-
     Ok(())
+}
+
+/// IPv4範囲をBTreeSetへ直接挿入
+/// 逐次集合化する
+fn insert_ipv4_range(
+    start_str: &str,
+    value_str: &str,
+    set: &mut BTreeSet<IpNet>,
+) -> Result<(), AppError> {
+    let start_addr = start_str.parse::<Ipv4Addr>()?;
+    let width = value_str.parse::<u64>()?;
+    let start_num = u32::from(start_addr) as u64;
+    let end_num = start_num + width - 1;
+
+    let mut cur = start_num;
+    while cur <= end_num {
+        let max_size = largest_ipv4_block(cur, end_num);
+        let net = Ipv4Net::new(Ipv4Addr::from(cur as u32), max_size)
+            .map_err(|e| AppError::ParseError(format!("Ipv4Net::new error: {e}")))?;
+        set.insert(IpNet::V4(net));
+        cur += 1u64 << (32 - max_size);
+    }
+    Ok(())
+}
+
+/// RIR テキストを1行ずつストリーミング解析し、重複排除しながら集合化
+/// 戻り値は **重複無し・昇順** の `BTreeSet`
+pub fn parse_and_collect_ips(
+    country_code: &str,
+    rir_texts: &[String],
+) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
+    let mut ipv4_set = BTreeSet::<IpNet>::new();
+    let mut ipv6_set = BTreeSet::<IpNet>::new();
+    let cc_upper = country_code.to_ascii_uppercase();
+
+    for text in rir_texts {
+        for line in text.lines() {
+            // コメントやreserved行はスキップ
+            if line.starts_with('#') || line.contains('*') || line.contains("reserved") {
+                continue;
+            }
+            let params: Vec<&str> = line.split('|').collect();
+            if params.len() < 5 || !params[1].eq_ignore_ascii_case(&cc_upper) {
+                continue;
+            }
+
+            match params[2] {
+                "ipv4" => insert_ipv4_range(params[3], params[4], &mut ipv4_set)?,
+                "ipv6" => {
+                    let cidr = format!("{}/{}", params[3], params[4]);
+                    let net = cidr
+                        .parse::<Ipv6Net>()
+                        .map_err(|e| AppError::ParseError(format!("Ipv6 parse error: {e}")))?;
+                    ipv6_set.insert(IpNet::V6(net));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 逐次集合化である程度集約済みだが、さらに最終aggregateで最小化
+    let agg_v4 = IpNet::aggregate(&ipv4_set.iter().copied().collect::<Vec<_>>());
+    let agg_v6 = IpNet::aggregate(&ipv6_set.iter().copied().collect::<Vec<_>>());
+
+    Ok((agg_v4.into_iter().collect(), agg_v6.into_iter().collect()))
+}
+
+pub async fn process_country_code_from_map(
+    country_code: &str,
+    country_map: &HashMap<String, (Vec<IpNet>, Vec<IpNet>)>,
+    mode: &str,
+    output_format: OutputFormat,
+) -> Result<(), AppError> {
+    let upper = country_code.to_ascii_uppercase();
+    let (v4_vec, v6_vec) = match country_map.get(&upper) {
+        Some(tup) => tup,
+        None => {
+            eprintln!("No IPs found for country code: {}", upper);
+            return Ok(());
+        }
+    };
+
+    // CPU バウンドの aggregate を block_in_place で分離
+    let (ipv4_set, ipv6_set) = tokio::task::block_in_place(|| {
+        let v4_set = IpNet::aggregate(&v4_vec).into_iter().collect();
+        let v6_set = IpNet::aggregate(&v6_vec).into_iter().collect();
+        (v4_set, v6_set)
+    });
+
+    write_ip_lists_to_files(&upper, &ipv4_set, &ipv6_set, mode, output_format).await
 }
