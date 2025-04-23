@@ -1,99 +1,73 @@
-/// RPKI VRPテーブルをRoutinatorから取得して構築する実装。
+//! RPKI VRP テーブルを Routinator 0.13 ライブラリ API
+//! (`operation::vrps::VrpsBuilder`) だけで構築し、OnceCell にキャッシュする。
+//!
+//! Cargo.toml には
+//!     routinator = "=0.13.2"
+//! を指定しておくこと。
+
 use crate::error::AppError;
 use ipnet::IpNet;
 use once_cell::sync::OnceCell;
-use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    process::{Command, Stdio},
-    sync::Arc,
+use routinator::{
+    config::Config,
+    operation::vrps::VrpsBuilder, // ← 0.13 では公開されている
+    rpki::repository::x509::Time,
 };
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-/// ASN → [(Prefix, maxLen)] の VRP テーブル型
+/// ASN → [(Prefix, max_len)]
 type VrpTable = HashMap<u32, Vec<(IpNet, u8)>>;
 
 /// グローバル共有キャッシュ
 static GLOBAL_VRP_TABLE: OnceCell<Arc<RwLock<VrpTable>>> = OnceCell::new();
 
-/// Routinator JSON に含まれる最小限のフィールドだけ定義
-#[derive(Debug, Deserialize)]
-struct VrpsJson {
-    roas: Vec<RoaEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RoaEntry {
-    asn: String,    // 例: "AS2497"
-    prefix: String, // 例: "203.178.128.0/17"
-    #[serde(rename = "maxLength")]
-    max_length: u8, // 例: 24
-}
-
-/// TAL 群を読み込み VRP テーブルを返す（初回のみ実行）
+/// VRP テーブル取得（初回のみビルド）
 pub async fn load_vrps_from_tals() -> Result<Arc<RwLock<VrpTable>>, AppError> {
-    // すでに構築済みなら即return
+    // すでにロード済みなら即 return
     if let Some(tbl) = GLOBAL_VRP_TABLE.get() {
         return Ok(tbl.clone());
     }
 
-    // Routinator を blocking スレッドで実行
-    let output_res = tokio::task::spawn_blocking(|| {
-        Command::new("routinator")
-            .args(["vrps", "--format", "json", "--output", "-"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output() // -> std::io::Result<Output>
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("Failed to spawn routinator: {e}")))?;
+    // Routinator の VRP 生成は CPU バウンドなので blocking にオフロード
+    let table = tokio::task::spawn_blocking(|| -> Result<VrpTable, AppError> {
+        //----------------------------------------------------------
+        // 1. Config を組み立て（デフォルト設定で十分）
+        //----------------------------------------------------------
+        let cfg = Config::default();
 
-    let output = output_res?;
+        //----------------------------------------------------------
+        // 2. VrpsBuilder で検証 & VRP 一覧取得
+        //----------------------------------------------------------
+        let now = Time::now();
+        let (payload, _stats) = VrpsBuilder::default()
+            .validate_at(now)
+            .build(&cfg) // (Payload, Stats)
+            .map_err(|e| AppError::Other(format!("Routinator validation error: {e}")))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Other(format!(
-            "Routinator exited with code {}: {}",
-            output.status, stderr
-        )));
-    }
+        //----------------------------------------------------------
+        // 3. Payload → HashMap<u32, Vec<(IpNet,u8)>> へ変換
+        //----------------------------------------------------------
+        let mut tbl: VrpTable = HashMap::new();
 
-    // JSON をパース
-    let json_str = String::from_utf8(output.stdout)?;
-    let vrps: VrpsJson = serde_json::from_str(&json_str)
-        .map_err(|e| AppError::Other(format!("JSON parse error: {e}")))?;
-
-    // VRPハッシュマップを構築
-    let mut tbl: VrpTable = HashMap::new();
-
-    for roa in vrps.roas {
-        // "AS64500" -> 64500
-        let asn_num: u32 = roa
-            .asn
-            .trim_start_matches("AS")
-            .parse()
-            .map_err(|e| AppError::Other(format!("ASN parse error: {e}")))?;
-
-        // プレフィックスをIpNetに変換
-        let net: IpNet = roa
-            .prefix
-            .parse()
-            .map_err(|e| AppError::Other(format!("Prefix parse error: {e}")))?;
-
-        // ROAのmaxLengthがネットワーク長より短いのは不正なのでスキップ
-        if net.prefix_len() > roa.max_length {
-            continue;
+        for rec in payload.iter() {
+            let net: IpNet = rec
+                .prefix()
+                .to_string()
+                .parse()
+                .map_err(|e| AppError::Other(format!("Prefix parse error: {e}")))?;
+            tbl.entry(rec.asn().into_u32())
+                .or_default()
+                .push((net, rec.max_len()));
         }
 
-        tbl.entry(asn_num)
-            .or_insert_with(Vec::new)
-            .push((net, roa.max_length));
-    }
+        Ok(tbl)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Blocking task panicked: {e}")))??;
 
-    // OnceCell へ格納して返却
-    let arc = Arc::new(RwLock::new(tbl));
-    // 失敗しても無視
+    let arc = Arc::new(RwLock::new(table));
+    // OnceCell に格納
     let _ = GLOBAL_VRP_TABLE.set(arc.clone());
     Ok(arc)
 }

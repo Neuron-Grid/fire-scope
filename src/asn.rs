@@ -2,23 +2,23 @@ use crate::common::{IpFamily, OutputFormat};
 use crate::constants::RDAP_BASE_URLS;
 use crate::error::AppError;
 use crate::output::write_as_ip_list_to_file;
-use crate::rpki::rpki_filter::filter_valid_by_rpki;
 use ipnet::IpNet;
 use reqwest::Client;
 use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
 
-/// RDAPでAS → (IPv4, IPv6)プレフィックスを取得し、RPKI VALIDのみ返す
+/// RDAPから AS → (IPv4, IPv6) プレフィックスを取得する
+/// RPKI検証なし
 pub async fn get_prefixes_via_rdap(
     client: &Client,
     as_number: &str,
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     let mut nets: Vec<IpNet> = Vec::new();
 
-    // RDAP を順に問い合わせ
+    // RDAP を順に問い合わせる
     for base in RDAP_BASE_URLS {
-        // ARINはOriginAS拡張を優先
+        // ARIN は OriginAS 拡張を優先
         let url = if base.contains("arin.net") {
             format!("{base}/arin_originas0_networksbyoriginas/{as_number}")
         } else {
@@ -36,25 +36,19 @@ pub async fn get_prefixes_via_rdap(
         } else {
             nets.extend(extract_prefixes_generic(&json)?);
         }
-        // 取得できたら他のRDAPはスキップ
+
+        // 1 か所でも取れたら残りの RDAP はスキップ
         if !nets.is_empty() {
             break;
         }
     }
 
-    // RPKI VALIDのみ残す
-    let nets_valid = filter_rpki_valid(as_number, &nets).await?;
-    let (v4set, v6set) = dedup_and_partition(&nets_valid);
+    // ※ RPKI でフィルタせずにそのまま使う
+    let (v4set, v6set) = dedup_and_partition(&nets);
     Ok((v4set, v6set))
 }
 
-/// Vec<IpNet>をRPKI VALIDのみ抽出
-async fn filter_rpki_valid(as_number: &str, nets: &[IpNet]) -> Result<Vec<IpNet>, AppError> {
-    let asn_num = as_number.trim_start_matches("AS").parse::<u32>()?;
-    filter_valid_by_rpki(asn_num, nets).await
-}
-
-/// ARIN OriginAS RDAP応答からCIDR抽出
+/// ARIN OriginAS RDAP 応答から CIDR を抽出
 fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
     let mut nets = Vec::new();
     if let Some(arr) = v
@@ -81,7 +75,7 @@ fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
     Ok(nets)
 }
 
-/// 汎用RDAP(cidr0 拡張)応答からCIDR抽出
+/// 汎用 RDAP (cidr0 拡張) 応答から CIDR を抽出
 fn extract_prefixes_generic(v: &Value) -> Result<Vec<IpNet>, AppError> {
     let mut nets = Vec::new();
     if let Some(arr) = v.get("cidr0_cidrs").and_then(|v| v.as_array()) {
@@ -104,7 +98,7 @@ fn extract_prefixes_generic(v: &Value) -> Result<Vec<IpNet>, AppError> {
     Ok(nets)
 }
 
-/// Vec<IpNet> → (IPv4, IPv6)集合に分割しaggregate
+/// Vec<IpNet> → (IPv4, IPv6) 集合に分割し aggregate
 fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
     let agg = IpNet::aggregate(&nets.to_vec());
     let mut v4 = BTreeSet::new();
@@ -122,7 +116,7 @@ fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
     (v4, v6)
 }
 
-/// 複数ASを並列取得してファイル出力
+/// 複数 AS を並列取得してファイル出力
 pub async fn process_as_numbers(
     client: &Client,
     as_numbers: &[String],

@@ -57,7 +57,7 @@ pub async fn write_list_nft<P: AsRef<Path>>(
 
     let mut content = String::new();
     content.push_str(header);
-    content.push_str(&format!("define {} {{\n", define_name));
+    content.push_str(&format!("define {} = {{\n", define_name));
     for net in ipnets {
         content.push_str(&format!("    {},\n", net));
     }
