@@ -1,4 +1,4 @@
-use crate::constants::{RIR_URLS, TAL_URLS};
+use crate::constants::RIR_URLS;
 use crate::error::AppError;
 use crate::fetch::fetch_with_retry;
 use futures::future::join_all;
@@ -56,12 +56,4 @@ pub async fn download_all_rir_files(
     client: &Client,
 ) -> Result<(Vec<String>, Vec<String>), AppError> {
     download_files(client, &RIR_URLS).await
-}
-
-/// TALファイルのダウンロード関数。
-/// 成功テキストと失敗URLのタプルを返す。
-pub async fn download_all_tal_files(
-    client: &Client,
-) -> Result<(Vec<String>, Vec<String>), AppError> {
-    download_files(client, &TAL_URLS).await
 }

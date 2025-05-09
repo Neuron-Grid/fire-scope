@@ -1,4 +1,3 @@
-use crate::asn::get_ips_for_as_once_no_rpki;
 use crate::cli::Cli;
 use crate::common::OutputFormat;
 use crate::common_download::download_all_rir_files;
@@ -25,8 +24,8 @@ pub async fn run_overlap(
         }
     }
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts_ok)?;
-    let as_strings: Vec<String> = as_numbers.iter().map(|n| format!("AS{}", n)).collect();
-    let (as_ips_v4, as_ips_v6) = collect_as_ips_no_rpki(client, &as_strings).await?; // 修正
+    let as_strings: Vec<String> = as_numbers.iter().map(|n| n.to_string()).collect();
+    let (as_ips_v4, as_ips_v6) = collect_as_ips_no_rpki(client, &as_strings).await?;
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
     write_overlap_to_file(
         &country_codes.join("_").to_uppercase(),
@@ -77,7 +76,7 @@ async fn collect_as_ips_no_rpki(
     let mut a_v6 = BTreeSet::new();
 
     for asn in as_strings {
-        let (v4set, v6set) = get_ips_for_as_once_no_rpki(client, asn).await?; // 修正
+        let (v4set, v6set) = crate::asn::get_prefixes_via_rdap(client, asn).await?;
         a_v4.extend(v4set);
         a_v6.extend(v6set);
     }
