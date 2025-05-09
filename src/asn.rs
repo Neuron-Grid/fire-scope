@@ -1,5 +1,4 @@
 use crate::common::{IpFamily, OutputFormat};
-use crate::constants::RDAP_BASE_URLS;
 use crate::error::AppError;
 use crate::output::write_as_ip_list_to_file;
 use ipnet::IpNet;
@@ -16,31 +15,14 @@ pub async fn get_prefixes_via_rdap(
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     let mut nets: Vec<IpNet> = Vec::new();
 
-    // RDAP を順に問い合わせる
-    for base in RDAP_BASE_URLS {
-        // ARIN は OriginAS 拡張を優先
-        let url = if base.contains("arin.net") {
-            format!("{base}/arin_originas0_networksbyoriginas/{as_number}")
-        } else {
-            format!("{base}/autnum/{as_number}")
-        };
+    // RDAP を1か所のみ問い合わせる（例: ARIN）
+    let base = "https://rdap.arin.net/registry";
+    let url = format!("{base}/arin_originas0_networksbyoriginas/{as_number}");
 
-        let resp = match client.get(&url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            _ => continue,
-        };
-
+    let resp = client.get(&url).send().await?;
+    if resp.status().is_success() {
         let json: Value = resp.json().await?;
-        if base.contains("arin.net") {
-            nets.extend(extract_prefixes_from_arin(&json)?);
-        } else {
-            nets.extend(extract_prefixes_generic(&json)?);
-        }
-
-        // 1 か所でも取れたら残りの RDAP はスキップ
-        if !nets.is_empty() {
-            break;
-        }
+        nets.extend(extract_prefixes_from_arin(&json)?);
     }
 
     // ※ RPKI でフィルタせずにそのまま使う
@@ -65,29 +47,6 @@ fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
                 obj.get(prefix_key).and_then(|v| v.as_str()),
                 obj.get(len_key),
             ) {
-                let cidr = format!("{}/{}", prefix, len);
-                if let Ok(net) = IpNet::from_str(&cidr) {
-                    nets.push(net);
-                }
-            }
-        }
-    }
-    Ok(nets)
-}
-
-/// 汎用 RDAP (cidr0 拡張) 応答から CIDR を抽出
-fn extract_prefixes_generic(v: &Value) -> Result<Vec<IpNet>, AppError> {
-    let mut nets = Vec::new();
-    if let Some(arr) = v.get("cidr0_cidrs").and_then(|v| v.as_array()) {
-        for obj in arr {
-            let key = if obj.get("v4prefix").is_some() {
-                "v4prefix"
-            } else {
-                "v6prefix"
-            };
-            if let (Some(prefix), Some(len)) =
-                (obj.get(key).and_then(|v| v.as_str()), obj.get("length"))
-            {
                 let cidr = format!("{}/{}", prefix, len);
                 if let Ok(net) = IpNet::from_str(&cidr) {
                     nets.push(net);
