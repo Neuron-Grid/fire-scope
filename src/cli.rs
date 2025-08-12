@@ -63,4 +63,58 @@ pub struct Cli {
         help = "Select output format: 'txt' or 'nft'.\ndefault: txt"
     )]
     pub output_format: String,
+
+    #[arg(
+        long = "max-retries",
+        help = "Maximum HTTP retry attempts for downloads.",
+        required = false,
+        default_value_t = 6u32,
+        value_parser = clap::value_parser!(u32)
+    )]
+    pub max_retries: u32,
+
+    #[arg(
+        long = "max-backoff-sec",
+        help = "Cap for exponential backoff seconds per retry.",
+        required = false,
+        default_value_t = 16u64,
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub max_backoff_sec: u64,
+
+    #[arg(
+        long = "http-timeout-secs",
+        help = "HTTP request total timeout in seconds.",
+        required = false,
+        default_value_t = 20u64,
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub http_timeout_secs: u64,
+
+    #[arg(
+        long = "connect-timeout-secs",
+        help = "HTTP connect timeout in seconds.",
+        required = false,
+        default_value_t = 10u64,
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub connect_timeout_secs: u64,
+
+    #[arg(
+        long = "concurrency",
+        short = 'C',
+        help = "Max concurrent AS queries.",
+        required = false,
+        default_value_t = 5usize,
+        value_parser = clap::value_parser!(usize)
+    )]
+    pub concurrency: usize,
+
+    #[arg(
+        long = "continue-on-partial",
+        help = "Continue with successfully downloaded RIR files even if some downloads fail.",
+        required = false,
+        default_value_t = false
+    )]
+    pub continue_on_partial: bool,
 }

@@ -6,6 +6,8 @@ use reqwest::Client;
 use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
+use crate::constants::MAX_JSON_DOWNLOAD_BYTES;
+use crate::fetch::fetch_json_with_limit;
 
 /// AS の発表プレフィックスを複数ソースから取得する（RIPEstat 優先、ARIN RDAP をフォールバック）
 /// RPKI検証なし
@@ -67,8 +69,7 @@ async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Ve
         "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{}",
         as_number
     );
-    let resp = client.get(&url).send().await?.error_for_status()?;
-    let json: Value = resp.json().await?;
+    let json: Value = fetch_json_with_limit(client, &url, MAX_JSON_DOWNLOAD_BYTES).await?;
     let mut nets = Vec::new();
     if let Some(prefixes) = json.get("data").and_then(|d| d.get("prefixes")).and_then(|p| p.as_array()) {
         for obj in prefixes {
@@ -86,8 +87,7 @@ async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Ve
 async fn fetch_arin_originas_prefixes(client: &Client, as_number: &str) -> Result<Vec<IpNet>, AppError> {
     let base = "https://rdap.arin.net/registry";
     let url = format!("{base}/arin_originas0_networksbyoriginas/{as_number}");
-    let resp = client.get(&url).send().await?.error_for_status()?;
-    let json: Value = resp.json().await?;
+    let json: Value = fetch_json_with_limit(client, &url, MAX_JSON_DOWNLOAD_BYTES).await?;
     extract_prefixes_from_arin(&json)
 }
 
@@ -114,8 +114,9 @@ pub async fn process_as_numbers(
     client: &Client,
     as_numbers: &[String],
     output_format: OutputFormat,
+    concurrency: usize,
 ) -> Result<(), AppError> {
-    let max_concurrent = 5;
+    let max_concurrent = if concurrency == 0 { 1 } else { concurrency };
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     let handles = as_numbers

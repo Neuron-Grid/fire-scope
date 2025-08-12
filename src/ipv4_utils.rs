@@ -1,4 +1,5 @@
 use ipnet::{IpNet, Ipv4Net};
+use crate::error::AppError;
 use std::net::Ipv4Addr;
 
 pub trait ILog2Sub1 {
@@ -69,4 +70,28 @@ pub fn ipv4_summarize_range(start: u64, end: u64) -> Vec<IpNet> {
     }
 
     cidrs
+}
+
+/// RIR拡張フォーマットのIPv4行（start, value）をCIDR列へ展開
+pub fn parse_ipv4_range_to_cidrs(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
+    let start_addr = start_str.parse::<Ipv4Addr>()?;
+    let width_u64 = value_str.parse::<u64>()?;
+
+    if width_u64 == 0 {
+        return Err(AppError::ParseError("IPv4 width must be > 0".into()));
+    }
+
+    let start_num = u32::from(start_addr) as u64;
+    let end_num_u64 = start_num
+        .checked_add(width_u64)
+        .and_then(|v| v.checked_sub(1))
+        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".into()))?;
+
+    if end_num_u64 > u32::MAX as u64 {
+        return Err(AppError::ParseError(
+            "IPv4 range exceeds 32‑bit boundary".into(),
+        ));
+    }
+
+    Ok(ipv4_summarize_range(start_num, end_num_u64))
 }

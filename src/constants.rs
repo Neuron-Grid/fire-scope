@@ -10,3 +10,6 @@ pub const RIR_URLS: &[&str] = &[
 
 /// ダウンロード本文サイズ上限 (バイト)。防御的に 32 MiB
 pub const MAX_RIR_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
+
+/// JSON API 応答の最大サイズ上限 (バイト)。防御的に 8 MiB
+pub const MAX_JSON_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024;

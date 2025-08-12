@@ -16,12 +16,23 @@ pub async fn run_overlap(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     let (country_codes, as_numbers) = validate_args(args)?;
-    let (rir_texts_ok, failed_urls) = download_all_rir_files(client).await?;
+    let (rir_texts_ok, failed_urls) =
+        download_all_rir_files(client, args.max_retries, args.max_backoff_sec).await?;
     if !failed_urls.is_empty() {
         eprintln!("[Warning] The following RIR URLs failed to download:");
         for url in &failed_urls {
             eprintln!("  - {}", url);
         }
+        if !args.continue_on_partial {
+            return Err(AppError::Other(
+                "Some RIR downloads failed (use --continue-on-partial to proceed)".into(),
+            ));
+        }
+    }
+    if rir_texts_ok.is_empty() {
+        return Err(AppError::Other(
+            "No RIR files available to process".into(),
+        ));
     }
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts_ok)?;
     let as_strings: Vec<String> = as_numbers.iter().map(|n| n.to_string()).collect();

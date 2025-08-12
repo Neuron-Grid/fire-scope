@@ -1,7 +1,8 @@
 use crate::error::AppError;
 use ipnet::IpNet;
-use std::{collections::BTreeSet, path::Path};
-use tokio::fs::{self};
+use std::{collections::BTreeSet, path::{Path, PathBuf}};
+use tokio::fs::{self, OpenOptions};
+use tokio::io::AsyncWriteExt;
 
 /// 出力用の安全な識別子に正規化する
 /// - 非ASCII英数字はアンダースコアに置換
@@ -45,8 +46,8 @@ pub async fn write_list_txt<P: AsRef<Path>>(
 
     let content = format!("{}{}\n", header, body);
 
-    // 常に上書き
-    fs::write(path, &content).await?; // io::Error -> AppError::Io
+    // 常に上書き（原子的に安全な書き込み）
+    atomic_write(path.as_ref(), content.as_bytes()).await?;
 
     Ok(())
 }
@@ -71,8 +72,42 @@ pub async fn write_list_nft<P: AsRef<Path>>(
     }
     content.push_str("}\n");
 
-    // 常に上書き
-    fs::write(file_path, &content).await?;
+    // 常に上書き（原子的に安全な書き込み）
+    atomic_write(file_path, content.as_bytes()).await?;
 
     Ok(())
+}
+
+/// 一時ファイルに書いてから原子的に`rename`で置換する安全な書き込み
+async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), AppError> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut tmp_path = PathBuf::from(dir);
+    let fname = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let suffix: u64 = rand::random();
+    tmp_path.push(format!(".{}.tmp.{}", fname, suffix));
+
+    // 作成（既存不可）→ 書き込み → fsync
+    {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)
+            .await?;
+        file.write_all(content).await?;
+        // データの同期（失敗はそのままエラー伝播）
+        file.sync_all().await?;
+    }
+
+    // 原子的置換（Unixは既存を置換、Windowsは失敗しうるためフォールバック）
+    match fs::rename(&tmp_path, path).await {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            let _ = fs::remove_file(path).await;
+            fs::rename(&tmp_path, path).await?;
+            Ok(())
+        }
+    }
 }

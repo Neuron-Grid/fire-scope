@@ -10,6 +10,8 @@ use reqwest::Client;
 pub async fn download_files(
     client: &Client,
     urls: &[&'static str],
+    retry_attempts: u32,
+    max_backoff_secs: u64,
 ) -> Result<(Vec<String>, Vec<String>), AppError> {
     let mut handles = Vec::new();
 
@@ -18,8 +20,10 @@ pub async fn download_files(
         let url_owned = url.to_string();
         let client_clone = client.clone();
 
+        let ra = retry_attempts;
+        let mx = max_backoff_secs;
         handles.push(tokio::spawn(async move {
-            fetch_with_retry(&client_clone, &url_owned).await
+            fetch_with_retry(&client_clone, &url_owned, ra, mx).await
         }));
     }
 
@@ -54,6 +58,8 @@ pub async fn download_files(
 /// 成功テキストと失敗URLのタプルを返す。
 pub async fn download_all_rir_files(
     client: &Client,
+    retry_attempts: u32,
+    max_backoff_secs: u64,
 ) -> Result<(Vec<String>, Vec<String>), AppError> {
-    download_files(client, &RIR_URLS).await
+    download_files(client, &RIR_URLS, retry_attempts, max_backoff_secs).await
 }

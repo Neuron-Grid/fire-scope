@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
-reqwest = { version = "0.12.15", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12.15", features = ["json", "rustls-tls", "stream"] }
 chrono = "0.4.40"
 futures = "0.3.31"
 ipnet = "2.11.0"

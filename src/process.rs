@@ -1,11 +1,8 @@
 use crate::common::OutputFormat;
 use crate::error::AppError;
-use crate::ipv4_utils::largest_ipv4_block;
 use crate::output::write_ip_lists_to_files;
-use crate::parse::parse_all_country_codes;
-use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+use ipnet::{IpNet, Ipv6Net};
 use std::collections::{BTreeSet, HashMap};
-use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
@@ -29,8 +26,12 @@ pub async fn process_all_country_codes(
     rir_texts: &[String],
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
-    // 1回だけ全RIRテキストをパースして国コード→(IPv4,IPv6)のマップを作る
-    let country_map = parse_all_country_codes(rir_texts)?;
+    // 1回だけ全RIRテキストをパースして国コード→(IPv4,IPv6)のマップを作る（CPU重）
+    let rir_texts_owned = rir_texts.to_owned();
+    let country_map = tokio::task::spawn_blocking(move || {
+        crate::parse::parse_all_country_codes(&rir_texts_owned)
+    })
+    .await??;
     let country_map_arc = Arc::new(country_map);
 
     // 国コードごとに並列タスクを生成（事前パース結果を参照）
@@ -58,31 +59,9 @@ fn insert_ipv4_range(
     value_str: &str,
     set: &mut BTreeSet<IpNet>,
 ) -> Result<(), AppError> {
-    let start_addr = start_str.parse::<Ipv4Addr>()?;
-    let width = value_str.parse::<u64>()?;
-    if width == 0 {
-        return Err(AppError::ParseError("IPv4 width must be > 0".into()));
-    }
-    let start_num = u32::from(start_addr) as u64;
-    let end_num = start_num
-        .checked_add(width)
-        .and_then(|v| v.checked_sub(1))
-        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".into()))?;
-
-    if end_num > u32::MAX as u64 {
-        return Err(AppError::ParseError(
-            "IPv4 range exceeds 32‑bit boundary".into(),
-        ));
-    }
-
-    let mut cur = start_num;
-    while cur <= end_num {
-        let max_size = largest_ipv4_block(cur, end_num);
-        let net = Ipv4Net::new(Ipv4Addr::from(cur as u32), max_size)
-            .map_err(|e| AppError::ParseError(format!("Ipv4Net::new error: {e}")))?;
-        set.insert(IpNet::V4(net));
-        let step: u64 = 1u64 << (32 - max_size);
-        cur = cur.saturating_add(step);
+    let cidrs = crate::ipv4_utils::parse_ipv4_range_to_cidrs(start_str, value_str)?;
+    for net in cidrs {
+        set.insert(net);
     }
     Ok(())
 }

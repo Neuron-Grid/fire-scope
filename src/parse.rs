@@ -1,7 +1,6 @@
 use crate::error::AppError;
-use ipnet::{IpNet, Ipv4Net, Ipv6Net};
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use ipnet::{IpNet, Ipv6Net};
+use std::collections::{BTreeSet, HashMap};
 
 pub fn parse_ip_lines(
     text: &str,
@@ -40,46 +39,10 @@ pub fn parse_ip_lines(
 
 fn parse_ip_params(params: &[&str]) -> Result<Vec<IpNet>, AppError> {
     match params[2] {
-        "ipv4" => parse_ipv4_range(params[3], params[4]),
+        "ipv4" => crate::ipv4_utils::parse_ipv4_range_to_cidrs(params[3], params[4]),
         "ipv6" => parse_ipv6_range(params[3], params[4]),
         _ => Ok(vec![]),
     }
-}
-
-fn parse_ipv4_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
-    let start_addr = start_str.parse::<Ipv4Addr>()?;
-    let width_u64 = value_str.parse::<u64>()?;
-
-    if width_u64 == 0 {
-        return Err(AppError::ParseError("IPv4 width must be > 0".into()));
-    }
-
-    let start_num = u32::from(start_addr) as u64;
-    let end_num_u64 = start_num
-        .checked_add(width_u64)
-        .and_then(|v| v.checked_sub(1))
-        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".into()))?;
-
-    if end_num_u64 > u32::MAX as u64 {
-        return Err(AppError::ParseError(
-            "IPv4 range exceeds 32‑bit boundary".into(),
-        ));
-    }
-
-    let mut cidrs = Vec::new();
-    let mut cur = start_num;
-
-    while cur <= end_num_u64 {
-        let max_size = crate::ipv4_utils::largest_ipv4_block(cur, end_num_u64);
-        let net = Ipv4Net::new(Ipv4Addr::from(cur as u32), max_size)
-            .map_err(|e| AppError::ParseError(format!("Ipv4Net::new error: {e}")))?;
-        cidrs.push(IpNet::V4(net));
-
-        let block_size: u64 = 1u64 << (32 - max_size);
-        cur = cur.saturating_add(block_size);
-    }
-
-    Ok(cidrs)
 }
 
 fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
@@ -93,7 +56,8 @@ fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppE
 pub fn parse_all_country_codes(
     rir_texts: &[String],
 ) -> Result<HashMap<String, (Vec<IpNet>, Vec<IpNet>)>, AppError> {
-    let mut country_map = HashMap::new();
+    // 重複排除のため、まずは集合で保持
+    let mut country_sets: HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)> = HashMap::new();
 
     for text in rir_texts {
         for line in text.lines() {
@@ -109,19 +73,25 @@ pub fn parse_all_country_codes(
             match params[2] {
                 "ipv4" | "ipv6" => {
                     let nets = parse_ip_params(&params)?;
-                    let entry = country_map
+                    let entry = country_sets
                         .entry(country_code.clone())
-                        .or_insert((Vec::new(), Vec::new()));
+                        .or_insert((BTreeSet::new(), BTreeSet::new()));
                     if params[2] == "ipv4" {
-                        entry.0.extend(nets);
+                        for n in nets { entry.0.insert(n); }
                     } else {
-                        entry.1.extend(nets);
+                        for n in nets { entry.1.insert(n); }
                     }
                 }
                 _ => {}
             }
         }
     }
-
+    // 集約してVecへ変換
+    let mut country_map: HashMap<String, (Vec<IpNet>, Vec<IpNet>)> = HashMap::new();
+    for (cc, (v4set, v6set)) in country_sets.into_iter() {
+        let agg_v4 = IpNet::aggregate(&v4set.iter().copied().collect::<Vec<_>>());
+        let agg_v6 = IpNet::aggregate(&v6set.iter().copied().collect::<Vec<_>>());
+        country_map.insert(cc, (agg_v4, agg_v6));
+    }
     Ok(country_map)
 }
