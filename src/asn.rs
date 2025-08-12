@@ -7,27 +7,30 @@ use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
 
-/// RDAPから AS → (IPv4, IPv6) プレフィックスを取得する
+/// AS の発表プレフィックスを複数ソースから取得する（RIPEstat 優先、ARIN RDAP をフォールバック）
 /// RPKI検証なし
 pub async fn get_prefixes_via_rdap(
     client: &Client,
     as_number: &str,
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
-    let mut nets: Vec<IpNet> = Vec::new();
-
-    // RDAP を1か所のみ問い合わせる（例: ARIN）
-    let base = "https://rdap.arin.net/registry";
-    let url = format!("{base}/arin_originas0_networksbyoriginas/{as_number}");
-
-    let resp = client.get(&url).send().await?;
-    if resp.status().is_success() {
-        let json: Value = resp.json().await?;
-        nets.extend(extract_prefixes_from_arin(&json)?);
+    // 1) RIPEstat announced-prefixes API
+    match fetch_ripe_stat_prefixes(client, as_number).await {
+        Ok(mut nets) => {
+            // フォールバックとして ARIN も併合（失敗は無視）
+            if let Ok(mut arin) = fetch_arin_originas_prefixes(client, as_number).await {
+                nets.append(&mut arin);
+            }
+            let (v4set, v6set) = dedup_and_partition(&nets);
+            return Ok((v4set, v6set));
+        }
+        Err(e) => {
+            eprintln!("[asn] RIPEstat fetch failed for AS{as_number}: {e}");
+            // 2) ARIN OriginAS RDAP（米地域中心、非網羅）
+            let nets = fetch_arin_originas_prefixes(client, as_number).await?;
+            let (v4set, v6set) = dedup_and_partition(&nets);
+            return Ok((v4set, v6set));
+        }
     }
-
-    // ※ RPKI でフィルタせずにそのまま使う
-    let (v4set, v6set) = dedup_and_partition(&nets);
-    Ok((v4set, v6set))
 }
 
 /// ARIN OriginAS RDAP 応答から CIDR を抽出
@@ -57,6 +60,37 @@ fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
     Ok(nets)
 }
 
+/// RIPEstat: Announced Prefixes API から CIDR を抽出
+async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Vec<IpNet>, AppError> {
+    // https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}
+    let url = format!(
+        "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{}",
+        as_number
+    );
+    let resp = client.get(&url).send().await?.error_for_status()?;
+    let json: Value = resp.json().await?;
+    let mut nets = Vec::new();
+    if let Some(prefixes) = json.get("data").and_then(|d| d.get("prefixes")).and_then(|p| p.as_array()) {
+        for obj in prefixes {
+            if let Some(pfx) = obj.get("prefix").and_then(|v| v.as_str()) {
+                if let Ok(net) = IpNet::from_str(pfx) {
+                    nets.push(net);
+                }
+            }
+        }
+    }
+    Ok(nets)
+}
+
+/// ARIN 独自 RDAP OriginAS ネットワーク API
+async fn fetch_arin_originas_prefixes(client: &Client, as_number: &str) -> Result<Vec<IpNet>, AppError> {
+    let base = "https://rdap.arin.net/registry";
+    let url = format!("{base}/arin_originas0_networksbyoriginas/{as_number}");
+    let resp = client.get(&url).send().await?.error_for_status()?;
+    let json: Value = resp.json().await?;
+    extract_prefixes_from_arin(&json)
+}
+
 /// Vec<IpNet> → (IPv4, IPv6) 集合に分割し aggregate
 fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
     let agg = IpNet::aggregate(&nets.to_vec());
@@ -79,7 +113,6 @@ fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
 pub async fn process_as_numbers(
     client: &Client,
     as_numbers: &[String],
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     let max_concurrent = 5;
@@ -89,7 +122,6 @@ pub async fn process_as_numbers(
         .iter()
         .map(|asn| {
             let asn_cloned = asn.clone();
-            let mode_c = mode.to_string();
             let fmt_c = output_format;
             let client_c = client.clone();
             let sem_c = semaphore.clone();
@@ -97,8 +129,8 @@ pub async fn process_as_numbers(
                 let _permit = sem_c.acquire_owned().await?;
                 match get_prefixes_via_rdap(&client_c, &asn_cloned).await {
                     Ok((v4, v6)) => {
-                        write_ip_list(&asn_cloned, IpFamily::V4, &v4, &mode_c, fmt_c).await?;
-                        write_ip_list(&asn_cloned, IpFamily::V6, &v6, &mode_c, fmt_c).await?;
+                        write_ip_list(&asn_cloned, IpFamily::V4, &v4, fmt_c).await?;
+                        write_ip_list(&asn_cloned, IpFamily::V6, &v6, fmt_c).await?;
                     }
                     Err(e) => eprintln!("Error processing {asn_cloned}: {e}"),
                 };
@@ -118,13 +150,12 @@ async fn write_ip_list(
     as_number: &str,
     ip_family: IpFamily,
     ip_set: &BTreeSet<IpNet>,
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     if ip_set.is_empty() {
         println!("No {} routes for {}", ip_family.as_str(), as_number);
     } else {
-        write_as_ip_list_to_file(as_number, ip_family, ip_set, mode, output_format).await?;
+        write_as_ip_list_to_file(as_number, ip_family, ip_set, output_format).await?;
     }
     Ok(())
 }

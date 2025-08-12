@@ -1,3 +1,4 @@
+use crate::constants::MAX_RIR_DOWNLOAD_BYTES;
 use crate::error::AppError;
 use rand::Rng;
 use reqwest::Client;
@@ -5,7 +6,16 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
-    let resp = client.get(url).send().await?;
+    let resp = client.get(url).send().await?.error_for_status()?; // 非2xxを明示的にエラー化
+
+    if let Some(len) = resp.content_length() {
+        if len > MAX_RIR_DOWNLOAD_BYTES {
+            return Err(AppError::Other(format!(
+                "Response too large ({} bytes > {} bytes): {}",
+                len, MAX_RIR_DOWNLOAD_BYTES, url
+            )));
+        }
+    }
     let text = resp.text().await?;
     Ok(text)
 }

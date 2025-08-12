@@ -7,3 +7,6 @@ pub const RIR_URLS: &[&str] = &[
     "https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest",
     "https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest",
 ];
+
+/// ダウンロード本文サイズ上限 (バイト)。防御的に 32 MiB
+pub const MAX_RIR_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;

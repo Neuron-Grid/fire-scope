@@ -7,7 +7,6 @@ use reqwest::Client;
 pub async fn run_country_codes(
     country_codes: &[String],
     client: &Client,
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     // 取得成功したRIRテキストと、失敗URLを受け取る
@@ -25,6 +24,6 @@ pub async fn run_country_codes(
     }
 
     // 成功したrir_textsだけをもとに国コード解析を実施
-    process_all_country_codes(country_codes, &rir_texts, mode, output_format).await?;
+    process_all_country_codes(country_codes, &rir_texts, output_format).await?;
     Ok(())
 }

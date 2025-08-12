@@ -1,8 +1,28 @@
 use crate::error::AppError;
 use ipnet::IpNet;
 use std::{collections::BTreeSet, path::Path};
-use tokio::fs::{self, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use tokio::fs::{self};
+
+/// 出力用の安全な識別子に正規化する
+/// - 非ASCII英数字はアンダースコアに置換
+/// - 先頭末尾のアンダースコアは削除
+/// - 長すぎる場合は64文字に切り詰め
+/// - 空になった場合は "UNKNOWN"
+pub fn sanitize_identifier(input: &str) -> String {
+    let mut s = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            s.push(ch);
+        } else {
+            s.push('_');
+        }
+    }
+
+    // 先頭末尾のアンダースコア除去
+    let s = s.trim_matches('_').to_string();
+    let s = if s.len() > 64 { s[..64].to_string() } else { s };
+    if s.is_empty() { "UNKNOWN".to_string() } else { s }
+}
 
 /// 汎用ヘッダー生成
 pub fn make_header(now_str: &str, country_code: &str, as_number: &str) -> String {
@@ -15,7 +35,6 @@ pub fn make_header(now_str: &str, country_code: &str, as_number: &str) -> String
 pub async fn write_list_txt<P: AsRef<Path>>(
     path: P,
     ipnets: &BTreeSet<IpNet>,
-    mode: &str,
     header: &str,
 ) -> Result<(), AppError> {
     let body = ipnets
@@ -26,19 +45,8 @@ pub async fn write_list_txt<P: AsRef<Path>>(
 
     let content = format!("{}{}\n", header, body);
 
-    match mode {
-        "append" => {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .await?; // io::Error -> AppError::Io
-            file.write_all(content.as_bytes()).await?;
-        }
-        _ => {
-            fs::write(path, &content).await?; // 同上
-        }
-    }
+    // 常に上書き
+    fs::write(path, &content).await?; // io::Error -> AppError::Io
 
     Ok(())
 }
@@ -46,14 +54,14 @@ pub async fn write_list_txt<P: AsRef<Path>>(
 pub async fn write_list_nft<P: AsRef<Path>>(
     path: P,
     ipnets: &BTreeSet<IpNet>,
-    mode: &str,
     header: &str,
 ) -> Result<(), AppError> {
     let file_path = path.as_ref();
-    let define_name = file_path
+    let define_name_raw = file_path
         .file_stem()
         .and_then(|os| os.to_str())
         .unwrap_or("unknown_define");
+    let define_name = sanitize_identifier(define_name_raw);
 
     let mut content = String::new();
     content.push_str(header);
@@ -63,19 +71,8 @@ pub async fn write_list_nft<P: AsRef<Path>>(
     }
     content.push_str("}\n");
 
-    match mode {
-        "append" => {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(file_path)
-                .await?;
-            file.write_all(content.as_bytes()).await?;
-        }
-        _ => {
-            fs::write(file_path, &content).await?;
-        }
-    }
+    // 常に上書き
+    fs::write(file_path, &content).await?;
 
     Ok(())
 }

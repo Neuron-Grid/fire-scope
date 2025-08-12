@@ -1,5 +1,18 @@
 use clap::Parser;
 
+fn parse_country_code(s: &str) -> Result<String, String> {
+    let upper = s.to_ascii_uppercase();
+    let valid = upper.chars().all(|c| c.is_ascii_alphabetic());
+    if !valid {
+        return Err("Country code must be alphabetic (A-Z)".into());
+    }
+    let len = upper.len();
+    if !(len == 2 || len == 3) {
+        return Err("Country code length must be 2 or 3".into());
+    }
+    Ok(upper)
+}
+
 /// CLIの定義
 #[derive(Parser, Debug)]
 #[command(
@@ -14,6 +27,7 @@ pub struct Cli {
         required_unless_present_any = ["as_numbers", "overlap"],
         required = false,
         num_args = 1..,
+        value_parser = parse_country_code,
         help = "Specify the country codes.\nExample: jp br us"
     )]
     pub country_codes: Option<Vec<String>>,
@@ -28,16 +42,6 @@ pub struct Cli {
         help = "Specify AS numbers.\nExample: 0000 1234"
     )]
     pub as_numbers: Option<Vec<u32>>,
-
-    #[arg(
-        short = 'm',
-        long = "mode",
-        default_value = "overwrite",
-        required = false,
-        hide_default_value = true,
-        help = "Select file output mode: 'append' or 'overwrite'.\ndefault: overwrite"
-    )]
-    pub mode: String,
 
     #[arg(
         short = 'o',

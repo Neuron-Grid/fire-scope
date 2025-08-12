@@ -24,7 +24,8 @@ It can also retrieve the specified AS number and also output it to a text file.
   - [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
 
 - When specifying the `-a` option, data is retrieved from the following
-  - `whois.radb.net`
+  - RIPEstat Announced Prefixes API (primary)
+  - ARIN RDAP OriginAS networks (fallback)
 
 
 ## Usage
@@ -53,11 +54,18 @@ $ fire-scope -c jp us -a 0000 1234 -o
 - `-a`: Specify one or more AS numbers.
 - `-h`: Display help.
 - `-v`: Display version.
-- `-m`: Select the file output mode, either `append` or `overwrite`. \nIf not specified, `overwrite` is used by default.
-  - `append`: Append mode
-  - `overwrite`: Overwrite mode
 - `-o`: Output the overlapping IP addresses among the IPv4/v6 addresses of the specified country code(s) and AS number(s).
   - By design, both `-c` and `-a` must be specified.
+
+## Notes
+- Output files are always overwritten if they already exist.
+- If neither `-c` nor `-a` are specified, the command exits with a non-zero code.
+
+## Security
+- Filenames and nft define names are sanitized to alphanumerics/underscore to avoid path traversal and injection.
+- `-c/--country` accepts only alphabetic ISO-like codes (length 2–3).
+- HTTP client enforces overall and connect timeouts and sets a descriptive User-Agent.
+- RIR downloads are rejected if `Content-Length` exceeds 32 MiB.
 
 ## License
 [MPL-2.0](./LICENSE.txt)

@@ -24,7 +24,8 @@
   - [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
 
 - `-a`を指定した場合の取得元
-  - `whois.radb.net`
+  - RIPEstat Announced Prefixes API（優先）
+  - ARIN RDAP OriginAS networks（フォールバック）
 
 ## 使い方
 ### インストール
@@ -45,7 +46,7 @@ $ fire-scope -a 0000 1234
 ```
 
 ```bash
-$ fire-scope -c jp us -a 0000 1234 -c
+$ fire-scope -c jp us -a 0000 1234 -o
 ```
 
 ### オプション
@@ -53,15 +54,14 @@ $ fire-scope -c jp us -a 0000 1234 -c
 - `-a` : AS番号を指定します。複数指定可能です。
 - `-h` : ヘルプを表示します。
 - `-v` : バージョンを表示します。
-- `-m` : ファイル出力モードの選択できます。「追記」または「上書き」を選択できます。指定しなかった場合は「上書き」が選択されます。
-  - `append` : 追記モード
-  - `overwrite` : 上書きモード
 - `-o` : 指定された国コードとAS番号のIPv4/v6アドレスのうち、重複している部分のIPアドレスを出力します。
   - 性質上、`-c`と`-a`の両方の指定が必須事項です。
 
 - **注意事項**<br>
 `-c`か`-a`のどちらか一方は必ず指定してください。
-指定しなかった場合はエラーが発生します。
+指定しなかった場合はエラーで非0終了します。
+
+- 既存の出力ファイルがある場合は常に上書きします。
 
 ## ライセンス
 [MPL-2.0](./LICENSE.txt)

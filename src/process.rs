@@ -2,6 +2,7 @@ use crate::common::OutputFormat;
 use crate::error::AppError;
 use crate::ipv4_utils::largest_ipv4_block;
 use crate::output::write_ip_lists_to_files;
+use crate::parse::parse_all_country_codes;
 use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::collections::{BTreeSet, HashMap};
 use std::net::Ipv4Addr;
@@ -12,7 +13,6 @@ use tokio::task::JoinHandle;
 pub async fn process_country_code(
     country_code: &str,
     rir_texts: &[String],
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     // CPUバウンド部をTokioのブロッキングスレッドにオフロード
@@ -20,29 +20,27 @@ pub async fn process_country_code(
         tokio::task::block_in_place(|| parse_and_collect_ips(country_code, rir_texts))?;
 
     // I/Oはasyncのまま
-    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, mode, output_format).await
+    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, output_format).await
 }
 
 /// 全RIRテキストから該当国コードのIP一覧を集約し、そのまま書き出し
 pub async fn process_all_country_codes(
     country_codes: &[String],
     rir_texts: &[String],
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
-    // 共有参照をArcで包む
-    // 重い文字列をコピーしない
-    let rir_arc = Arc::new(rir_texts.to_vec());
+    // 1回だけ全RIRテキストをパースして国コード→(IPv4,IPv6)のマップを作る
+    let country_map = parse_all_country_codes(rir_texts)?;
+    let country_map_arc = Arc::new(country_map);
 
-    // 国コードごとに並列タスクを生成
+    // 国コードごとに並列タスクを生成（事前パース結果を参照）
     let mut tasks: Vec<JoinHandle<Result<(), AppError>>> = Vec::new();
     for code in country_codes {
         let code_cloned = code.clone();
-        let rir_cloned = Arc::clone(&rir_arc);
-        let mode_cloned = mode.to_string();
-
+        let map_cloned = Arc::clone(&country_map_arc);
         tasks.push(tokio::spawn(async move {
-            process_country_code(&code_cloned, &rir_cloned, &mode_cloned, output_format).await
+            crate::process::process_country_code_from_map(&code_cloned, &map_cloned, output_format)
+                .await
         }));
     }
 
@@ -62,8 +60,20 @@ fn insert_ipv4_range(
 ) -> Result<(), AppError> {
     let start_addr = start_str.parse::<Ipv4Addr>()?;
     let width = value_str.parse::<u64>()?;
+    if width == 0 {
+        return Err(AppError::ParseError("IPv4 width must be > 0".into()));
+    }
     let start_num = u32::from(start_addr) as u64;
-    let end_num = start_num + width - 1;
+    let end_num = start_num
+        .checked_add(width)
+        .and_then(|v| v.checked_sub(1))
+        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".into()))?;
+
+    if end_num > u32::MAX as u64 {
+        return Err(AppError::ParseError(
+            "IPv4 range exceeds 32‑bit boundary".into(),
+        ));
+    }
 
     let mut cur = start_num;
     while cur <= end_num {
@@ -71,7 +81,8 @@ fn insert_ipv4_range(
         let net = Ipv4Net::new(Ipv4Addr::from(cur as u32), max_size)
             .map_err(|e| AppError::ParseError(format!("Ipv4Net::new error: {e}")))?;
         set.insert(IpNet::V4(net));
-        cur += 1u64 << (32 - max_size);
+        let step: u64 = 1u64 << (32 - max_size);
+        cur = cur.saturating_add(step);
     }
     Ok(())
 }
@@ -121,7 +132,6 @@ pub fn parse_and_collect_ips(
 pub async fn process_country_code_from_map(
     country_code: &str,
     country_map: &HashMap<String, (Vec<IpNet>, Vec<IpNet>)>,
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     let upper = country_code.to_ascii_uppercase();
@@ -140,5 +150,5 @@ pub async fn process_country_code_from_map(
         (v4_set, v6_set)
     });
 
-    write_ip_lists_to_files(&upper, &ipv4_set, &ipv6_set, mode, output_format).await
+    write_ip_lists_to_files(&upper, &ipv4_set, &ipv6_set, output_format).await
 }

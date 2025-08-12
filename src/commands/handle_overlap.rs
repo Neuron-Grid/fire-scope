@@ -31,7 +31,6 @@ pub async fn run_overlap(
         &country_codes.join("_").to_uppercase(),
         &as_strings.join("_"),
         &overlap_nets,
-        &args.mode,
         output_format,
     )
     .await?;

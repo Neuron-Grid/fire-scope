@@ -7,10 +7,9 @@ use reqwest::Client;
 pub async fn run_as_numbers(
     client: &Client,
     as_numbers: &[u32],
-    mode: &str,
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     // RDAPは純粋な数値のみを期待
     let as_strings: Vec<String> = as_numbers.iter().map(|n| n.to_string()).collect();
-    process_as_numbers(client, &as_strings, mode, output_format).await
+    process_as_numbers(client, &as_strings, output_format).await
 }
