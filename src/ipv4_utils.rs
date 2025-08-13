@@ -1,5 +1,5 @@
-use ipnet::{IpNet, Ipv4Net};
 use crate::error::AppError;
+use ipnet::{IpNet, Ipv4Net};
 use std::net::Ipv4Addr;
 
 pub trait ILog2Sub1 {
@@ -89,7 +89,7 @@ pub fn parse_ipv4_range_to_cidrs(start_str: &str, value_str: &str) -> Result<Vec
 
     if end_num_u64 > u32::MAX as u64 {
         return Err(AppError::ParseError(
-            "IPv4 range exceeds 32‑bit boundary".into(),
+            "IPv4 range exceeds 32-bit boundary".into(),
         ));
     }
 
