@@ -1,7 +1,6 @@
 use crate::error::AppError;
 use ipnet::{IpNet, Ipv6Net};
 use std::collections::{BTreeSet, HashMap};
-use std::thread;
 use rayon::prelude::*;
 use rayon::join;
 
@@ -65,26 +64,16 @@ fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppE
 pub fn parse_all_country_codes(
     rir_texts: &[String],
 ) -> Result<HashMap<String, (Vec<IpNet>, Vec<IpNet>)>, AppError> {
-    // RIR ファイル単位で並列にパースし、最後にマージしてaggregate
-    let mut handles = Vec::with_capacity(rir_texts.len());
+    // RIRファイル単位のパースをrayonで並列化し、結果を順次マージ
+    let partials: Vec<Result<HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>, AppError>> =
+        rir_texts
+            .par_iter()
+            .map(|text| parse_one_rir_text_to_sets(text))
+            .collect();
 
-    for text in rir_texts.iter().cloned() {
-        // 各スレッドで 1 ファイル分をパースし、国コード→(v4set, v6set) を返す
-        handles.push(thread::spawn(move || -> Result<
-            HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>,
-            AppError,
-        > {
-            parse_one_rir_text_to_sets(&text)
-        }));
-    }
-
-    // マージ用の大域集合
     let mut country_sets: HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)> = HashMap::new();
-
-    for h in handles {
-        let map = h
-            .join()
-            .map_err(|_| AppError::Other("Parser thread panicked".into()))??;
+    for res in partials {
+        let map = res?;
         for (cc, (v4s, v6s)) in map.into_iter() {
             let entry = country_sets
                 .entry(cc)

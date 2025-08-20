@@ -68,8 +68,11 @@ pub async fn fetch_with_retry(
                     attempts,
                     e
                 ));
-                let sleep_duration = calc_exponential_backoff_duration(i, max_backoff_secs);
-                sleep(sleep_duration).await;
+                // 最終試行後はスリープせずに即エラー復帰
+                if i + 1 < attempts {
+                    let sleep_duration = calc_exponential_backoff_duration(i, max_backoff_secs);
+                    sleep(sleep_duration).await;
+                }
             }
         }
     }
@@ -83,13 +86,14 @@ pub async fn fetch_with_retry(
 
 /// 指数バックオフのスリープ時間を計算するヘルパー関数
 fn calc_exponential_backoff_duration(retry_count: u32, max_backoff_secs: u64) -> Duration {
+    // Full Jitter
+    // wait ~ Uniform(0, min(cap, 2^retry))
     let mut rng = rand::rng();
-    let random_part: f64 = rng.random();
-
-    let base = 2u64.saturating_pow(retry_count);
-    let capped = base.min(max_backoff_secs.max(1));
-    let backoff_seconds = (capped as f64) + random_part;
-    Duration::from_secs_f64(backoff_seconds)
+    let exp = 2u64.saturating_pow(retry_count);
+    let cap = max_backoff_secs.max(1);
+    let range = exp.min(cap) as f64;
+    let wait_secs = rng.random::<f64>() * range;
+    Duration::from_secs_f64(wait_secs)
 }
 
 /// JSONをサイズ上限制御の上で取得してパース

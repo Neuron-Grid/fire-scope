@@ -37,7 +37,8 @@ pub async fn run_overlap(
             "No RIR files available to process".into(),
         ));
     }
-    let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts_ok)?;
+    let (country_ips_v4, country_ips_v6) =
+        collect_country_ips(&country_codes, &rir_texts_ok).await?;
     let as_strings: Vec<String> = as_numbers.iter().map(|n| n.to_string()).collect();
     let (as_ips_v4, as_ips_v6) =
         collect_as_ips_no_rpki(client, &as_strings, args.concurrency).await?;
@@ -66,12 +67,16 @@ fn validate_args(args: &Cli) -> Result<(Vec<String>, Vec<u32>), AppError> {
 
 /// 国コードリストを1つずつparse_and_collect_ips()で取得
 /// 国コードは大文字に変換してから渡す
-fn collect_country_ips(
+async fn collect_country_ips(
     country_codes: &[String],
     rir_texts: &[String],
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
-    // 一度だけ全RIRテキストをパースし、国コード→(IPv4, IPv6)のマップを作成
-    let country_map = parse_all_country_codes(rir_texts)?;
+    // 一度だけ全RIRテキストをパースし、国コード→(IPv4, IPv6)のマップを作成（CPU重）
+    let rir_texts_owned = rir_texts.to_owned();
+    let country_map = tokio::task::spawn_blocking(move || {
+        parse_all_country_codes(&rir_texts_owned)
+    })
+    .await??;
 
     let mut c_v4 = BTreeSet::new();
     let mut c_v6 = BTreeSet::new();

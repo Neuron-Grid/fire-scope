@@ -7,28 +7,6 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use crate::common::debug_log;
 
-/// 単一国コードを処理し、結果ファイルを出力
-pub async fn process_country_code(
-    country_code: &str,
-    rir_texts: &[String],
-    output_format: OutputFormat,
-) -> Result<(), AppError> {
-    // 実装統一: すべての国コードを一度にパースしてから取り出す
-    let rir_texts_owned = rir_texts.to_owned();
-    let upper = country_code.to_ascii_uppercase();
-    let (ipv4_set, ipv6_set) = tokio::task::spawn_blocking(move || {
-        let map = crate::parse::parse_all_country_codes(&rir_texts_owned)?;
-        let (v4_vec, v6_vec) = map.get(&upper).cloned().unwrap_or_default();
-        let v4_set: BTreeSet<IpNet> = v4_vec.into_iter().collect();
-        let v6_set: BTreeSet<IpNet> = v6_vec.into_iter().collect();
-        Ok::<_, AppError>((v4_set, v6_set))
-    })
-    .await??;
-
-    // I/Oはasyncのまま
-    write_ip_lists_to_files(country_code, &ipv4_set, &ipv6_set, output_format).await
-}
-
 /// 全RIRテキストから該当国コードのIP一覧を集約し、そのまま書き出し
 pub async fn process_all_country_codes(
     country_codes: &[String],
