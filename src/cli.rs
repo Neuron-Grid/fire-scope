@@ -107,7 +107,7 @@ pub struct Cli {
         help = "Max concurrent AS queries.",
         required = false,
         default_value_t = 5usize,
-        value_parser = clap::value_parser!(usize).range(1..=64)
+        value_parser = clap::value_parser!(usize)
     )]
     pub concurrency: usize,
 
