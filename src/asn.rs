@@ -8,6 +8,7 @@ use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
 use crate::constants::MAX_JSON_DOWNLOAD_BYTES;
 use crate::fetch::fetch_json_with_limit;
+use crate::common::debug_log;
 
 /// AS の発表プレフィックスを複数ソースから取得する（RIPEstat 優先、ARIN RDAP をフォールバック）
 /// RPKI検証なし
@@ -26,7 +27,7 @@ pub async fn get_prefixes_via_rdap(
             return Ok((v4set, v6set));
         }
         Err(e) => {
-            eprintln!("[asn] RIPEstat fetch failed for AS{as_number}: {e}");
+            debug_log(format!("RIPEstat fetch failed for AS{}: {}", as_number, e));
             // 2) ARIN OriginAS RDAP（米地域中心、非網羅）
             let nets = fetch_arin_originas_prefixes(client, as_number).await?;
             let (v4set, v6set) = dedup_and_partition(&nets);
@@ -133,7 +134,7 @@ pub async fn process_as_numbers(
                         write_ip_list(&asn_cloned, IpFamily::V4, &v4, fmt_c).await?;
                         write_ip_list(&asn_cloned, IpFamily::V6, &v6, fmt_c).await?;
                     }
-                    Err(e) => eprintln!("Error processing {asn_cloned}: {e}"),
+                    Err(e) => debug_log(format!("Error processing {}: {}", asn_cloned, e)),
                 };
                 Ok::<(), AppError>(())
             })
@@ -154,7 +155,7 @@ async fn write_ip_list(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     if ip_set.is_empty() {
-        println!("No {} routes for {}", ip_family.as_str(), as_number);
+        debug_log(format!("No {} routes for {}", ip_family.as_str(), as_number));
     } else {
         write_as_ip_list_to_file(as_number, ip_family, ip_set, output_format).await?;
     }

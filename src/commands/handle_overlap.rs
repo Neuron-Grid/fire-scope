@@ -4,10 +4,13 @@ use crate::common_download::download_all_rir_files;
 use crate::error::AppError;
 use crate::output::write_overlap_to_file;
 use crate::overlap::find_overlaps;
-use crate::process::parse_and_collect_ips;
+use crate::parse::parse_all_country_codes;
 use ipnet::IpNet;
 use reqwest::Client;
 use std::collections::BTreeSet;
+use crate::common::debug_log;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 /// overlapモードのメイン処理
 pub async fn run_overlap(
@@ -19,10 +22,10 @@ pub async fn run_overlap(
     let (rir_texts_ok, failed_urls) =
         download_all_rir_files(client, args.max_retries, args.max_backoff_sec).await?;
     if !failed_urls.is_empty() {
-        eprintln!("[Warning] The following RIR URLs failed to download:");
-        for url in &failed_urls {
-            eprintln!("  - {}", url);
-        }
+        debug_log(format!(
+            "The following RIR URLs failed to download: {:?}",
+            failed_urls
+        ));
         if !args.continue_on_partial {
             return Err(AppError::Other(
                 "Some RIR downloads failed (use --continue-on-partial to proceed)".into(),
@@ -36,7 +39,8 @@ pub async fn run_overlap(
     }
     let (country_ips_v4, country_ips_v6) = collect_country_ips(&country_codes, &rir_texts_ok)?;
     let as_strings: Vec<String> = as_numbers.iter().map(|n| n.to_string()).collect();
-    let (as_ips_v4, as_ips_v6) = collect_as_ips_no_rpki(client, &as_strings).await?;
+    let (as_ips_v4, as_ips_v6) =
+        collect_as_ips_no_rpki(client, &as_strings, args.concurrency).await?;
     let overlap_nets = calculate_overlaps((country_ips_v4, country_ips_v6), (as_ips_v4, as_ips_v6));
     write_overlap_to_file(
         &country_codes.join("_").to_uppercase(),
@@ -66,14 +70,22 @@ fn collect_country_ips(
     country_codes: &[String],
     rir_texts: &[String],
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
+    // 一度だけ全RIRテキストをパースし、国コード→(IPv4, IPv6)のマップを作成
+    let country_map = parse_all_country_codes(rir_texts)?;
+
     let mut c_v4 = BTreeSet::new();
     let mut c_v6 = BTreeSet::new();
 
     for code in country_codes {
-        let (v4, v6) = parse_and_collect_ips(&code.to_uppercase(), rir_texts)?;
-        c_v4.extend(v4);
-        c_v6.extend(v6);
+        let upper = code.to_uppercase();
+        if let Some((v4_vec, v6_vec)) = country_map.get(&upper) {
+            c_v4.extend(v4_vec.iter().copied());
+            c_v6.extend(v6_vec.iter().copied());
+        } else {
+            debug_log(format!("No IPs found for country code: {}", upper));
+        }
     }
+
     Ok((c_v4, c_v6))
 }
 
@@ -81,15 +93,32 @@ fn collect_country_ips(
 async fn collect_as_ips_no_rpki(
     client: &Client,
     as_strings: &[String],
+    concurrency: usize,
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
+    let max_concurrent = if concurrency == 0 { 1 } else { concurrency };
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+    let mut handles = Vec::with_capacity(as_strings.len());
+    for asn in as_strings.iter().cloned() {
+        let client_c = client.clone();
+        let sem_c = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = sem_c.acquire_owned().await?;
+            crate::asn::get_prefixes_via_rdap(&client_c, &asn).await
+        }));
+    }
+
     let mut a_v4 = BTreeSet::new();
     let mut a_v6 = BTreeSet::new();
 
-    for asn in as_strings {
-        let (v4set, v6set) = crate::asn::get_prefixes_via_rdap(client, asn).await?;
+    for h in handles {
+        // JoinError は AppError に伝播
+        let res = h.await??;
+        let (v4set, v6set) = res;
         a_v4.extend(v4set);
         a_v6.extend(v6set);
     }
+
     Ok((a_v4, a_v6))
 }
 

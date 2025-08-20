@@ -4,6 +4,7 @@ use crate::output_common::{make_header, sanitize_identifier, write_list_nft, wri
 use chrono::Local;
 use ipnet::IpNet;
 use std::collections::BTreeSet;
+use crate::common::debug_log;
 
 /// IPv4/IPv6リストをファイルに書き出す
 /// 国コード用
@@ -59,20 +60,12 @@ pub async fn write_as_ip_list_to_file(
         OutputFormat::Txt => {
             let file_name = format!("AS_{}_{}.txt", safe_as, family.as_str());
             write_list_txt(&file_name, ipnets, &header).await?;
-            println!(
-                "[output] Wrote TXT for AS_{} {}",
-                safe_as,
-                family.as_str()
-            );
+            debug_log(format!("Wrote TXT for AS_{} {}", safe_as, family.as_str()));
         }
         OutputFormat::Nft => {
             let file_name = format!("AS_{}_{}.nft", safe_as, family.as_str());
             write_list_nft(&file_name, ipnets, &header).await?;
-            println!(
-                "[output] Wrote NFT for AS_{} {}",
-                safe_as,
-                family.as_str()
-            );
+            debug_log(format!("Wrote NFT for AS_{} {}", safe_as, family.as_str()));
         }
     }
     Ok(())
@@ -102,10 +95,10 @@ pub async fn write_overlap_to_file(
         .collect();
 
     if overlaps_v4.is_empty() && overlaps_v6.is_empty() {
-        println!(
-            "[overlap] No overlap found for country={} and AS={}",
+        debug_log(format!(
+            "No overlap found for country={} and AS={}",
             country_code, as_number
-        );
+        ));
         return Ok(());
     }
 

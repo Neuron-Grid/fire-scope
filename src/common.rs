@@ -1,4 +1,24 @@
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// デバッグの有効/無効を設定
+pub fn set_debug(enabled: bool) {
+    DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// デバッグが有効かどうか
+pub fn debug_enabled() -> bool {
+    DEBUG_ENABLED.load(Ordering::Relaxed)
+}
+
+/// デバッグ出力（stderr）
+pub fn debug_log(msg: impl AsRef<str>) {
+    if debug_enabled() {
+        eprintln!("[debug] {}", msg.as_ref());
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum IpFamily {

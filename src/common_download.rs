@@ -3,6 +3,7 @@ use crate::error::AppError;
 use crate::fetch::fetch_with_retry;
 use futures::future::join_all;
 use reqwest::Client;
+use crate::common::debug_log;
 
 /// 共通のダウンロード関数。
 /// urlsに指定されたURLを並列で全てダウンロードし、
@@ -40,12 +41,12 @@ pub async fn download_files(
             }
             // タスクは正常終了したが、内部のfetch処理がエラー
             Ok(Err(e)) => {
-                eprintln!("HTTP取得エラー: {} (URL={})", e, urls[i]);
+                debug_log(format!("HTTP fetch error: {} (url={})", e, urls[i]));
                 fail_urls.push(urls[i].to_string());
             }
             // タスク自体が失敗 (パニックなど)
             Err(e) => {
-                eprintln!("タスク失敗: {} (URL={})", e, urls[i]);
+                debug_log(format!("Download task failed: {} (url={})", e, urls[i]));
                 fail_urls.push(urls[i].to_string());
             }
         }

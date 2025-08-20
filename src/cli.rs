@@ -60,6 +60,7 @@ pub struct Cli {
         default_value = "txt",
         required = false,
         hide_default_value = true,
+        value_parser = ["txt", "nft"],
         help = "Select output format: 'txt' or 'nft'.\ndefault: txt"
     )]
     pub output_format: String,
@@ -106,7 +107,7 @@ pub struct Cli {
         help = "Max concurrent AS queries.",
         required = false,
         default_value_t = 5usize,
-        value_parser = clap::value_parser!(usize)
+        value_parser = clap::value_parser!(usize).range(1..=64)
     )]
     pub concurrency: usize,
 
@@ -117,4 +118,13 @@ pub struct Cli {
         default_value_t = false
     )]
     pub continue_on_partial: bool,
+
+    #[arg(
+        long = "debug",
+        short = 'd',
+        help = "Enable verbose debug output to stderr.",
+        required = false,
+        default_value_t = false
+    )]
+    pub debug: bool,
 }

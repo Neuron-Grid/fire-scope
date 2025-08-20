@@ -14,7 +14,13 @@ pub fn parse_ip_lines(
             continue;
         }
         let params: Vec<&str> = line.split('|').collect();
-        if params.len() < 5 {
+        if params.len() < 7 {
+            continue;
+        }
+
+        // status 列を厳密に判定（allocated / assigned のみ採用）
+        let status = params[6].to_ascii_lowercase();
+        if status != "allocated" && status != "assigned" {
             continue;
         }
 
@@ -65,7 +71,13 @@ pub fn parse_all_country_codes(
                 continue;
             }
             let params: Vec<&str> = line.split('|').collect();
-            if params.len() < 5 {
+            if params.len() < 7 {
+                continue;
+            }
+
+            // status 列を厳密に判定（allocated / assigned のみ採用）
+            let status = params[6].to_ascii_lowercase();
+            if status != "allocated" && status != "assigned" {
                 continue;
             }
 

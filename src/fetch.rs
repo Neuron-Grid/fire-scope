@@ -5,6 +5,7 @@ use rand::Rng;
 use reqwest::Client;
 use std::time::Duration;
 use tokio::time::sleep;
+use crate::common::debug_log;
 
 /// ボディをストリーミングで読み込みつつ、サイズ上限を強制してStringへ変換
 async fn read_body_with_limit_to_string(
@@ -61,12 +62,12 @@ pub async fn fetch_with_retry(
                 return Ok(text);
             }
             Err(e) => {
-                eprintln!(
-                    "[fetch_with_retry] Error on attempt {}/{}: {}",
+                debug_log(format!(
+                    "fetch attempt {}/{} failed: {}",
                     i + 1,
                     attempts,
                     e
-                );
+                ));
                 let sleep_duration = calc_exponential_backoff_duration(i, max_backoff_secs);
                 sleep(sleep_duration).await;
             }

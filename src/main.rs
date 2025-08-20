@@ -1,6 +1,6 @@
 use clap::Parser;
 use fire_scope::cli::Cli;
-use fire_scope::common::OutputFormat;
+use fire_scope::common::{set_debug, OutputFormat};
 use fire_scope::error::AppError;
 use std::str::FromStr;
 use std::time::Duration;
@@ -8,6 +8,7 @@ use std::time::Duration;
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), AppError> {
     let args = Cli::parse();
+    set_debug(args.debug);
     run(args).await
 }
 
@@ -17,27 +18,25 @@ async fn run(args: Cli) -> Result<(), AppError> {
         .timeout(Duration::from_secs(args.http_timeout_secs))
         .connect_timeout(Duration::from_secs(args.connect_timeout_secs))
         .tcp_keepalive(Duration::from_secs(30))
-        .user_agent(format!("fire-scope/{} (+https://github.com/Neuron-Grid/fire-scope)", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!(
+            "fire-scope/{} (+https://github.com/Neuron-Grid/fire-scope)",
+            env!("CARGO_PKG_VERSION")
+        ))
         .build()?;
 
     let format_enum = match OutputFormat::from_str(&args.output_format) {
         Ok(fmt) => fmt,
-        Err(_) => {
-            eprintln!(
-                "Warning: Invalid output format '{}'. Using default 'txt'.",
-                args.output_format
-            );
-            OutputFormat::Txt
+        Err(e) => {
+            return Err(AppError::InvalidInput(format!(
+                "Invalid --format: {} (valid: 'txt' or 'nft')",
+                e
+            )));
         }
     };
 
     if args.overlap {
         // Overlap mode
-        fire_scope::commands::handle_overlap::run_overlap(
-            &args,
-            &client,
-            format_enum,
-        ).await?;
+        fire_scope::commands::handle_overlap::run_overlap(&args, &client, format_enum).await?;
         return Ok(());
     }
 
@@ -67,7 +66,7 @@ async fn run(args: Cli) -> Result<(), AppError> {
         return Ok(());
     }
 
-    eprintln!("Error: Please specify --country or --as-number.\nUse --help for usage.");
+    eprintln!("Please specify --country or --as-number. Use --help for usage.");
     Err(AppError::InvalidInput(
         "Either --country or --as-number must be specified".into(),
     ))

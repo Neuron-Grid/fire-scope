@@ -67,9 +67,13 @@ pub async fn write_list_nft<P: AsRef<Path>>(
     let mut content = String::new();
     content.push_str(header);
     content.push_str(&format!("define {} = {{\n", define_name));
-    for net in ipnets {
-        content.push_str(&format!("    {},\n", net));
+
+    if !ipnets.is_empty() {
+        let lines: Vec<String> = ipnets.iter().map(|n| format!("    {}", n)).collect();
+        content.push_str(&lines.join(",\n"));
+        content.push('\n');
     }
+
     content.push_str("}\n");
 
     // 常に上書き（原子的に安全な書き込み）
