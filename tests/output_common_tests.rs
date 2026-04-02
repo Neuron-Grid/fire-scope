@@ -45,6 +45,21 @@ async fn write_txt_and_nft_outputs_expected_content() {
     assert!(txt_content.contains("192.0.2.0/24"));
     assert!(txt_content.contains("2001:db8::/32"));
 
+    let mut updated_set = BTreeSet::new();
+    updated_set.insert(ipnet("198.51.100.0/24"));
+    let updated_header = make_header("2025-01-02 00:00:00", "US", "AS5678");
+
+    if let Err(e) = write_list_txt(&txt_path, &updated_set, &updated_header).await {
+        panic!("overwrite txt failed: {e}")
+    }
+    let overwritten_txt_content = fs::read_to_string(&txt_path)
+        .await
+        .unwrap_or_else(|e| panic!("read overwritten txt: {e}"));
+    assert!(overwritten_txt_content.contains("# Country Code: US"));
+    assert!(overwritten_txt_content.contains("198.51.100.0/24"));
+    assert!(!overwritten_txt_content.contains("192.0.2.0/24"));
+    assert!(!overwritten_txt_content.contains("2001:db8::/32"));
+
     // NFT（define名はファイル名stemをsanitize）
     let nft_name = "Te$st-List 01";
     let nft_path = dir.join(format!("{}-{}.nft", nft_name, rand::random::<u64>()));
@@ -59,4 +74,15 @@ async fn write_txt_and_nft_outputs_expected_content() {
     assert!(nft_content.contains("2001:db8::/32"));
     // ファイル名に乱数サフィックスが付くため、prefixのみ確認
     assert!(nft_content.contains("define Te_st_List_01"));
+
+    if let Err(e) = write_list_nft(&nft_path, &updated_set, &updated_header).await {
+        panic!("overwrite nft failed: {e}")
+    }
+    let overwritten_nft_content = fs::read_to_string(&nft_path)
+        .await
+        .unwrap_or_else(|e| panic!("read overwritten nft: {e}"));
+    assert!(overwritten_nft_content.contains("# AS Number: AS5678"));
+    assert!(overwritten_nft_content.contains("198.51.100.0/24"));
+    assert!(!overwritten_nft_content.contains("192.0.2.0/24"));
+    assert!(!overwritten_nft_content.contains("2001:db8::/32"));
 }

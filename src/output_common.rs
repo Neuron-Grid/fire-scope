@@ -1,6 +1,9 @@
 use crate::error::AppError;
 use ipnet::IpNet;
-use std::{collections::BTreeSet, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 use tokio::fs::{self, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
@@ -32,7 +35,11 @@ pub fn sanitize_identifier(input: &str) -> String {
     // 先頭末尾のアンダースコア除去
     let s = s.trim_matches('_').to_string();
     let s = if s.len() > 64 { s[..64].to_string() } else { s };
-    if s.is_empty() { "UNKNOWN".to_string() } else { s }
+    if s.is_empty() {
+        "UNKNOWN".to_string()
+    } else {
+        s
+    }
 }
 
 /// 汎用ヘッダー生成
@@ -92,7 +99,8 @@ pub async fn write_list_nft<P: AsRef<Path>>(
     Ok(())
 }
 
-/// 一時ファイルに書いてから原子的に`rename`で置換する安全な書き込み
+/// 一時ファイルに書いてから `rename` で置換する。
+/// `rename` に失敗した場合は既存ファイルを保持したままエラーを返す。
 async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), AppError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp_path = PathBuf::from(dir);
@@ -115,13 +123,13 @@ async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), AppError> {
         file.sync_all().await?;
     }
 
-    // 原子的置換（Unixは既存を置換、Windowsは失敗しうるためフォールバック）
+    // 同一ディレクトリ内の rename による置換を試みる。
+    // 失敗時は既存ファイルを削除せず、一時ファイルのみ best-effort で掃除する。
     match fs::rename(&tmp_path, path).await {
         Ok(_) => Ok(()),
-        Err(_) => {
-            let _ = fs::remove_file(path).await;
-            fs::rename(&tmp_path, path).await?;
-            Ok(())
+        Err(e) => {
+            let _ = fs::remove_file(&tmp_path).await;
+            Err(e.into())
         }
     }
 }

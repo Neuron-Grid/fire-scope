@@ -114,11 +114,17 @@ fn ipv6_summarize_range(start: u128, end: u128) -> Vec<IpNet> {
     let mut cur = start;
 
     while cur <= end {
-        let max = largest_ipv6_block_in_overlap(cur, end);
-        if let Ok(net) = Ipv6Net::new(Ipv6Addr::from(cur), max) {
+        let prefix_len = largest_ipv6_block_in_overlap(cur, end);
+        if let Ok(net) = Ipv6Net::new(Ipv6Addr::from(cur), prefix_len) {
             cidrs.push(IpNet::V6(net));
-            let step = 1u128 << (128 - max);
-            cur = cur.saturating_add(step);
+            if prefix_len == 0 {
+                break;
+            }
+            let step = 1u128 << (128 - prefix_len);
+            match cur.checked_add(step) {
+                Some(next) => cur = next,
+                None => break,
+            }
         } else {
             break;
         }
@@ -132,10 +138,15 @@ fn ipv6_to_u128(addr: Ipv6Addr) -> u128 {
 }
 
 fn largest_ipv6_block_in_overlap(current: u128, end: u128) -> u8 {
-    let tz: u32 = current.trailing_zeros();
-    let span = (end - current + 1).ilog2_128();
-    let max: u32 = tz.min(span);
-    (128 - max) as u8
+    let alignment_bits = current.trailing_zeros();
+    let span_bits = if current == 0 && end == u128::MAX {
+        // IPv6 全域の長さは 2^128 であり、u128 には収まらない。
+        128
+    } else {
+        (end - current + 1).ilog2_128()
+    };
+    let block_bits = alignment_bits.min(span_bits);
+    (128 - block_bits) as u8
 }
 
 trait ILog2U128 {

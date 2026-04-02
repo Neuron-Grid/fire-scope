@@ -29,3 +29,30 @@ fn find_overlaps_ipv4_and_ipv6_basic() {
     assert!(got.contains(&"2001:db8:8000::/33".to_string()));
 }
 
+#[test]
+fn find_overlaps_ipv6_full_range_does_not_panic() {
+    let mut country = BTreeSet::new();
+    country.insert(ipnet("::/0"));
+
+    let mut aslist = BTreeSet::new();
+    aslist.insert(ipnet("::/0"));
+
+    let overlaps = find_overlaps(&country, &aslist);
+    let got: Vec<String> = overlaps.into_iter().map(|n| n.to_string()).collect();
+
+    assert_eq!(got, vec!["::/0".to_string()]);
+}
+
+#[test]
+fn find_overlaps_ipv6_upper_half_is_preserved() {
+    let mut country = BTreeSet::new();
+    country.insert(ipnet("::/0"));
+
+    let mut aslist = BTreeSet::new();
+    aslist.insert(ipnet("8000::/1"));
+
+    let overlaps = find_overlaps(&country, &aslist);
+    let got: Vec<String> = overlaps.into_iter().map(|n| n.to_string()).collect();
+
+    assert_eq!(got, vec!["8000::/1".to_string()]);
+}

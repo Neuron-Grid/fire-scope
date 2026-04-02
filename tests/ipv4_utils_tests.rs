@@ -56,4 +56,3 @@ fn parses_ipv4_range_to_cidrs() -> Result<(), AppError> {
     assert!(e.is_err());
     Ok(())
 }
-

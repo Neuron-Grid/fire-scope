@@ -1,14 +1,16 @@
+use crate::common::debug_log;
 use crate::common::{IpFamily, OutputFormat};
+use crate::constants::MAX_JSON_DOWNLOAD_BYTES;
 use crate::error::AppError;
+use crate::fetch::fetch_json_with_limit;
 use crate::output::write_as_ip_list_to_file;
 use ipnet::IpNet;
 use reqwest::Client;
 use serde_json::Value;
 use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
-use crate::constants::MAX_JSON_DOWNLOAD_BYTES;
-use crate::fetch::fetch_json_with_limit;
-use crate::common::debug_log;
+
+type AsProcessOutcome = (String, Result<(), AppError>);
 
 /// AS の発表プレフィックスを複数ソースから取得する（RIPEstat 優先、ARIN RDAP をフォールバック）
 /// RPKI検証なし
@@ -62,7 +64,10 @@ fn extract_prefixes_from_arin(v: &Value) -> Result<Vec<IpNet>, AppError> {
 }
 
 /// RIPEstat: Announced Prefixes API から CIDR を抽出
-async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Vec<IpNet>, AppError> {
+async fn fetch_ripe_stat_prefixes(
+    client: &Client,
+    as_number: &str,
+) -> Result<Vec<IpNet>, AppError> {
     // https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}
     let url = format!(
         "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{}",
@@ -70,9 +75,17 @@ async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Ve
     );
     let json: Value = fetch_json_with_limit(client, &url, MAX_JSON_DOWNLOAD_BYTES).await?;
     let mut nets = Vec::new();
-    if let Some(prefixes) = json.get("data").and_then(|d| d.get("prefixes")).and_then(|p| p.as_array()) {
+    if let Some(prefixes) = json
+        .get("data")
+        .and_then(|d| d.get("prefixes"))
+        .and_then(|p| p.as_array())
+    {
         for obj in prefixes {
-            if let Some(net) = obj.get("prefix").and_then(|v| v.as_str()).and_then(|pfx| IpNet::from_str(pfx).ok()) {
+            if let Some(net) = obj
+                .get("prefix")
+                .and_then(|v| v.as_str())
+                .and_then(|pfx| IpNet::from_str(pfx).ok())
+            {
                 nets.push(net);
             }
         }
@@ -81,7 +94,10 @@ async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Ve
 }
 
 /// ARIN 独自 RDAP OriginAS ネットワーク API
-async fn fetch_arin_originas_prefixes(client: &Client, as_number: &str) -> Result<Vec<IpNet>, AppError> {
+async fn fetch_arin_originas_prefixes(
+    client: &Client,
+    as_number: &str,
+) -> Result<Vec<IpNet>, AppError> {
     let base = "https://rdap.arin.net/registry";
     let url = format!("{base}/arin_originas0_networksbyoriginas/{as_number}");
     let json: Value = fetch_json_with_limit(client, &url, MAX_JSON_DOWNLOAD_BYTES).await?;
@@ -125,22 +141,28 @@ pub async fn process_as_numbers(
             let sem_c = semaphore.clone();
             tokio::spawn(async move {
                 let _permit = sem_c.acquire_owned().await?;
-                match get_prefixes_via_rdap(&client_c, &asn_cloned).await {
-                    Ok((v4, v6)) => {
-                        write_ip_list(&asn_cloned, IpFamily::V4, &v4, fmt_c).await?;
-                        write_ip_list(&asn_cloned, IpFamily::V6, &v6, fmt_c).await?;
-                    }
-                    Err(e) => eprintln!("Warning: failed to fetch prefixes for AS{}: {}", asn_cloned, e),
-                };
-                Ok::<(), AppError>(())
+                let result = async {
+                    let (v4, v6) = get_prefixes_via_rdap(&client_c, &asn_cloned).await?;
+                    write_ip_list(&asn_cloned, IpFamily::V4, &v4, fmt_c).await?;
+                    write_ip_list(&asn_cloned, IpFamily::V6, &v6, fmt_c).await?;
+                    Ok::<(), AppError>(())
+                }
+                .await;
+                Ok::<AsProcessOutcome, AppError>((asn_cloned, result))
             })
         })
         .collect::<Vec<_>>();
 
+    let mut outcomes = Vec::with_capacity(handles.len());
     for h in handles {
-        h.await??;
+        let outcome = h.await??;
+        if let Err(ref e) = outcome.1 {
+            eprintln!("Warning: failed to process AS{}: {}", outcome.0, e);
+        }
+        outcomes.push(outcome);
     }
-    Ok(())
+
+    finalize_as_processing(outcomes)
 }
 
 /// ファイル書き出しヘルパ
@@ -151,9 +173,92 @@ async fn write_ip_list(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     if ip_set.is_empty() {
-        debug_log(format!("No {} routes for {}", ip_family.as_str(), as_number));
+        debug_log(format!(
+            "No {} routes for {}",
+            ip_family.as_str(),
+            as_number
+        ));
     } else {
         write_as_ip_list_to_file(as_number, ip_family, ip_set, output_format).await?;
     }
     Ok(())
+}
+
+fn finalize_as_processing(outcomes: Vec<AsProcessOutcome>) -> Result<(), AppError> {
+    let failures = outcomes
+        .into_iter()
+        .filter_map(|(asn, result)| result.err().map(|e| format!("AS{}: {}", asn, e)))
+        .collect::<Vec<_>>();
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "Failed to process {} AS number(s): {}",
+            failures.len(),
+            failures.join("; ")
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalize_as_processing;
+    use crate::error::AppError;
+
+    #[test]
+    fn finalize_as_processing_succeeds_when_all_asns_succeed() {
+        let outcomes = vec![
+            ("1234".to_string(), Ok::<(), AppError>(())),
+            ("5678".to_string(), Ok::<(), AppError>(())),
+        ];
+
+        assert!(finalize_as_processing(outcomes).is_ok());
+    }
+
+    #[test]
+    fn finalize_as_processing_fails_when_any_asn_fails() {
+        let outcomes = vec![
+            ("1234".to_string(), Ok::<(), AppError>(())),
+            ("5678".to_string(), Err(AppError::Other("boom".into()))),
+        ];
+
+        let err = match finalize_as_processing(outcomes) {
+            Ok(()) => panic!("expected partial failure"),
+            Err(err) => err,
+        };
+
+        match err {
+            AppError::Other(msg) => {
+                assert!(msg.contains("Failed to process 1 AS number(s)"));
+                assert!(msg.contains("AS5678: boom"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn finalize_as_processing_fails_when_all_asns_fail() {
+        let outcomes = vec![
+            ("1234".to_string(), Err(AppError::Other("timeout".into()))),
+            (
+                "5678".to_string(),
+                Err(AppError::Other("rdap unavailable".into())),
+            ),
+        ];
+
+        let err = match finalize_as_processing(outcomes) {
+            Ok(()) => panic!("expected total failure"),
+            Err(err) => err,
+        };
+
+        match err {
+            AppError::Other(msg) => {
+                assert!(msg.contains("Failed to process 2 AS number(s)"));
+                assert!(msg.contains("AS1234: timeout"));
+                assert!(msg.contains("AS5678: rdap unavailable"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
 }

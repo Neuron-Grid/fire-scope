@@ -4,18 +4,13 @@ use fire_scope::cli::Cli;
 #[test]
 fn cli_parses_country_and_format() {
     // 有効な最小引数（国コード + フォーマット）
-    let args = [
-        "fire-scope",
-        "-c",
-        "jp",
-        "-f",
-        "nft",
-        "--concurrency",
-        "3",
-    ];
+    let args = ["fire-scope", "-c", "jp", "-f", "nft", "--concurrency", "3"];
 
-    let cli = Cli::parse_from(&args);
-    let cc = cli.country_codes.expect("country required");
+    let cli = Cli::parse_from(args);
+    let cc = match cli.country_codes {
+        Some(country_codes) => country_codes,
+        None => panic!("country required"),
+    };
     assert_eq!(cc, vec!["JP".to_string()]);
     assert_eq!(cli.output_format, "nft".to_string());
     assert_eq!(cli.concurrency, 3usize);
@@ -36,10 +31,18 @@ fn cli_parses_as_numbers_and_overlap_requirements() {
         "--format",
         "txt",
     ];
-    let cli = Cli::parse_from(&args);
+    let cli = Cli::parse_from(args);
     assert!(cli.overlap);
-    assert_eq!(cli.country_codes.unwrap(), vec!["US".to_string()]);
-    assert_eq!(cli.as_numbers.unwrap(), vec![65000]);
+    let country_codes = match cli.country_codes {
+        Some(country_codes) => country_codes,
+        None => panic!("country required"),
+    };
+    let as_numbers = match cli.as_numbers {
+        Some(as_numbers) => as_numbers,
+        None => panic!("as numbers required"),
+    };
+
+    assert_eq!(country_codes, vec!["US".to_string()]);
+    assert_eq!(as_numbers, vec![65000]);
     assert_eq!(cli.output_format, "txt".to_string());
 }
-
