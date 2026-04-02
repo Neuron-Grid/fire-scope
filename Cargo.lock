@@ -311,7 +311,6 @@ dependencies = [
  "clap",
  "futures",
  "ipnet",
- "once_cell",
  "rand",
  "rayon",
  "reqwest",

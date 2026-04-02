@@ -35,7 +35,7 @@ async fn process_country_code_from_map_writes_files() {
     map.insert(
         cc.clone(),
         (
-            vec![ipnet("203.0.113.0/25"), ipnet("203.0.113.128/25")], // aggregate→/24
+            vec![ipnet("203.0.113.0/24")], // 既に集約済みのデータ
             vec![ipnet("2001:db8::/32")],
         ),
     );

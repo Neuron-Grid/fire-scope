@@ -3,7 +3,6 @@ use crate::common_download::download_all_rir_files;
 use crate::error::AppError;
 use crate::process::process_all_country_codes;
 use reqwest::Client;
-use crate::common::debug_log;
 
 pub async fn run_country_codes(
     country_codes: &[String],
@@ -18,8 +17,11 @@ pub async fn run_country_codes(
         download_all_rir_files(client, retry_attempts, max_backoff_secs).await?;
 
     if !failed_urls.is_empty() {
-        // 失敗したURLのリストがある場合、デバッグ時のみ詳細を表示
-        debug_log(format!("Some RIR files failed to download: {:?}", failed_urls));
+        eprintln!(
+            "Warning: {} RIR download(s) failed: {:?}",
+            failed_urls.len(),
+            failed_urls
+        );
         if !continue_on_partial {
             return Err(AppError::Other(
                 "Some RIR downloads failed (use --continue-on-partial to proceed)".into(),

@@ -1,5 +1,13 @@
+use ipnet::IpNet;
+use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// IPv4/IPv6 の Vec ペア（parse 結果など）
+pub type IpVecPair = (Vec<IpNet>, Vec<IpNet>);
+
+/// IPv4/IPv6 の BTreeSet ペア（重複排除済み）
+pub type IpSetPair = (BTreeSet<IpNet>, BTreeSet<IpNet>);
 
 static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
@@ -61,6 +69,16 @@ impl IpFamily {
 pub enum OutputFormat {
     Txt,
     Nft,
+}
+
+impl OutputFormat {
+    /// ファイル拡張子を返す
+    pub fn extension(self) -> &'static str {
+        match self {
+            OutputFormat::Txt => "txt",
+            OutputFormat::Nft => "nft",
+        }
+    }
 }
 
 // ここで標準トレイト `FromStr` を実装し、文字列 => `OutputFormat` 変換を行う

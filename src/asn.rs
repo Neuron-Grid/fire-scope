@@ -17,23 +17,21 @@ pub async fn get_prefixes_via_rdap(
     as_number: &str,
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     // 1) RIPEstat announced-prefixes API
-    match fetch_ripe_stat_prefixes(client, as_number).await {
+    let nets = match fetch_ripe_stat_prefixes(client, as_number).await {
         Ok(mut nets) => {
             // フォールバックとして ARIN も併合（失敗は無視）
             if let Ok(mut arin) = fetch_arin_originas_prefixes(client, as_number).await {
                 nets.append(&mut arin);
             }
-            let (v4set, v6set) = dedup_and_partition(&nets);
-            return Ok((v4set, v6set));
+            nets
         }
         Err(e) => {
             debug_log(format!("RIPEstat fetch failed for AS{}: {}", as_number, e));
             // 2) ARIN OriginAS RDAP（米地域中心、非網羅）
-            let nets = fetch_arin_originas_prefixes(client, as_number).await?;
-            let (v4set, v6set) = dedup_and_partition(&nets);
-            return Ok((v4set, v6set));
+            fetch_arin_originas_prefixes(client, as_number).await?
         }
-    }
+    };
+    Ok(dedup_and_partition(&nets))
 }
 
 /// ARIN OriginAS RDAP 応答から CIDR を抽出
@@ -74,10 +72,8 @@ async fn fetch_ripe_stat_prefixes(client: &Client, as_number: &str) -> Result<Ve
     let mut nets = Vec::new();
     if let Some(prefixes) = json.get("data").and_then(|d| d.get("prefixes")).and_then(|p| p.as_array()) {
         for obj in prefixes {
-            if let Some(pfx) = obj.get("prefix").and_then(|v| v.as_str()) {
-                if let Ok(net) = IpNet::from_str(pfx) {
-                    nets.push(net);
-                }
+            if let Some(net) = obj.get("prefix").and_then(|v| v.as_str()).and_then(|pfx| IpNet::from_str(pfx).ok()) {
+                nets.push(net);
             }
         }
     }
@@ -134,7 +130,7 @@ pub async fn process_as_numbers(
                         write_ip_list(&asn_cloned, IpFamily::V4, &v4, fmt_c).await?;
                         write_ip_list(&asn_cloned, IpFamily::V6, &v6, fmt_c).await?;
                     }
-                    Err(e) => debug_log(format!("Error processing {}: {}", asn_cloned, e)),
+                    Err(e) => eprintln!("Warning: failed to fetch prefixes for AS{}: {}", asn_cloned, e),
                 };
                 Ok::<(), AppError>(())
             })

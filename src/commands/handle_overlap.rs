@@ -22,10 +22,11 @@ pub async fn run_overlap(
     let (rir_texts_ok, failed_urls) =
         download_all_rir_files(client, args.max_retries, args.max_backoff_sec).await?;
     if !failed_urls.is_empty() {
-        debug_log(format!(
-            "The following RIR URLs failed to download: {:?}",
+        eprintln!(
+            "Warning: {} RIR download(s) failed: {:?}",
+            failed_urls.len(),
             failed_urls
-        ));
+        );
         if !args.continue_on_partial {
             return Err(AppError::Other(
                 "Some RIR downloads failed (use --continue-on-partial to proceed)".into(),
@@ -104,12 +105,13 @@ async fn collect_as_ips_no_rpki(
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     let mut handles = Vec::with_capacity(as_strings.len());
-    for asn in as_strings.iter().cloned() {
+    for asn in as_strings {
+        let asn_owned = asn.clone();
         let client_c = client.clone();
         let sem_c = semaphore.clone();
         handles.push(tokio::spawn(async move {
             let _permit = sem_c.acquire_owned().await?;
-            crate::asn::get_prefixes_via_rdap(&client_c, &asn).await
+            crate::asn::get_prefixes_via_rdap(&client_c, &asn_owned).await
         }));
     }
 

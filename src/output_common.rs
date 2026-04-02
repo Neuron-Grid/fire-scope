@@ -9,6 +9,16 @@ use tokio::io::AsyncWriteExt;
 /// - 先頭末尾のアンダースコアは削除
 /// - 長すぎる場合は64文字に切り詰め
 /// - 空になった場合は "UNKNOWN"
+///
+/// # Examples
+///
+/// ```
+/// use fire_scope::output_common::sanitize_identifier;
+///
+/// assert_eq!(sanitize_identifier("JP"), "JP");
+/// assert_eq!(sanitize_identifier("hello world"), "hello_world");
+/// assert_eq!(sanitize_identifier("---"), "UNKNOWN");
+/// ```
 pub fn sanitize_identifier(input: &str) -> String {
     let mut s = String::with_capacity(input.len());
     for ch in input.chars() {

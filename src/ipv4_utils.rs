@@ -46,6 +46,17 @@ pub fn largest_ipv4_block(current: u64, end: u64) -> u8 {
 }
 
 /// IPv4の範囲[`start`, `end`]をCIDRの最小セットにまとめる。
+///
+/// # Examples
+///
+/// ```
+/// use fire_scope::ipv4_utils::ipv4_summarize_range;
+///
+/// // 10.0.0.0 ~ 10.0.0.255 → 10.0.0.0/24
+/// let cidrs = ipv4_summarize_range(0x0A000000, 0x0A0000FF);
+/// assert_eq!(cidrs.len(), 1);
+/// assert_eq!(cidrs[0].to_string(), "10.0.0.0/24");
+/// ```
 pub fn ipv4_summarize_range(start: u64, end: u64) -> Vec<IpNet> {
     let mut cidrs = Vec::<IpNet>::new();
     let mut current = start;

@@ -1,5 +1,4 @@
 /// 定数の共通化
-
 pub const RIR_URLS: &[&str] = &[
     "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
     "https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest",

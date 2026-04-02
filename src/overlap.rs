@@ -4,6 +4,25 @@ use std::cmp::{max, min};
 use std::collections::BTreeSet;
 use std::net::Ipv6Addr;
 
+type V4V6Ranges = (Vec<(u64, u64)>, Vec<(u128, u128)>);
+
+/// 2つの IP セット間の重複（共通部分）を CIDR で返す。
+///
+/// # Examples
+///
+/// ```
+/// use fire_scope::overlap::find_overlaps;
+/// use ipnet::IpNet;
+/// use std::collections::BTreeSet;
+///
+/// let country: BTreeSet<IpNet> = ["10.0.0.0/24"].iter()
+///     .map(|s| s.parse().unwrap()).collect();
+/// let asn: BTreeSet<IpNet> = ["10.0.0.0/25"].iter()
+///     .map(|s| s.parse().unwrap()).collect();
+/// let overlap = find_overlaps(&country, &asn);
+/// assert_eq!(overlap.len(), 1);
+/// assert!(overlap.contains(&"10.0.0.0/25".parse::<IpNet>().unwrap()));
+/// ```
 pub fn find_overlaps(country_ips: &BTreeSet<IpNet>, as_ips: &BTreeSet<IpNet>) -> BTreeSet<IpNet> {
     // aggregateでプレフィックス数を削減
     let country_agg = IpNet::aggregate(&country_ips.iter().copied().collect::<Vec<_>>());
@@ -24,7 +43,7 @@ pub fn find_overlaps(country_ips: &BTreeSet<IpNet>, as_ips: &BTreeSet<IpNet>) ->
     o_v4.into_iter().chain(o_v6).collect()
 }
 
-fn split_ipv4_ipv6(nets: &[IpNet]) -> (Vec<(u64, u64)>, Vec<(u128, u128)>) {
+fn split_ipv4_ipv6(nets: &[IpNet]) -> V4V6Ranges {
     let mut v4 = Vec::new();
     let mut v6 = Vec::new();
 
@@ -114,7 +133,7 @@ fn ipv6_to_u128(addr: Ipv6Addr) -> u128 {
 
 fn largest_ipv6_block_in_overlap(current: u128, end: u128) -> u8 {
     let tz: u32 = current.trailing_zeros();
-    let span: u32 = ((end - current + 1).ilog2_128()) as u32;
+    let span = (end - current + 1).ilog2_128();
     let max: u32 = tz.min(span);
     (128 - max) as u8
 }

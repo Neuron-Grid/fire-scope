@@ -1,13 +1,29 @@
+use crate::common::IpVecPair;
 use crate::error::AppError;
 use ipnet::{IpNet, Ipv6Net};
 use std::collections::{BTreeSet, HashMap};
 use rayon::prelude::*;
 use rayon::join;
 
+type CountrySets = HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>;
+
+/// RIR 拡張フォーマットのテキストから指定国コードの IPv4/IPv6 を抽出する。
+///
+/// # Examples
+///
+/// ```
+/// use fire_scope::parse::parse_ip_lines;
+///
+/// let text = "apnic|JP|ipv4|192.168.0.0|256|20200101|allocated\n";
+/// let (v4, v6) = parse_ip_lines(text, "JP").unwrap();
+/// assert_eq!(v4.len(), 1);
+/// assert_eq!(v4[0].to_string(), "192.168.0.0/24");
+/// assert!(v6.is_empty());
+/// ```
 pub fn parse_ip_lines(
     text: &str,
     country_code: &str,
-) -> Result<(Vec<IpNet>, Vec<IpNet>), AppError> {
+) -> Result<IpVecPair, AppError> {
     let mut ipv4_list = Vec::new();
     let mut ipv6_list = Vec::new();
 
@@ -63,15 +79,15 @@ fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppE
 
 pub fn parse_all_country_codes(
     rir_texts: &[String],
-) -> Result<HashMap<String, (Vec<IpNet>, Vec<IpNet>)>, AppError> {
+) -> Result<HashMap<String, IpVecPair>, AppError> {
     // RIRファイル単位のパースをrayonで並列化し、結果を順次マージ
-    let partials: Vec<Result<HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>, AppError>> =
+    let partials: Vec<Result<CountrySets, AppError>> =
         rir_texts
             .par_iter()
             .map(|text| parse_one_rir_text_to_sets(text))
             .collect();
 
-    let mut country_sets: HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)> = HashMap::new();
+    let mut country_sets: CountrySets = HashMap::new();
     for res in partials {
         let map = res?;
         for (cc, (v4s, v6s)) in map.into_iter() {
@@ -84,7 +100,7 @@ pub fn parse_all_country_codes(
     }
 
     // 集約してVecへ変換（最小CIDR化）— 国ごとに並列実行
-    let aggregated: Vec<(String, (Vec<IpNet>, Vec<IpNet>))> = country_sets
+    let aggregated: Vec<(String, IpVecPair)> = country_sets
         .into_iter()
         .collect::<Vec<_>>()
         .into_par_iter()
@@ -101,7 +117,7 @@ pub fn parse_all_country_codes(
         })
         .collect();
 
-    let mut country_map: HashMap<String, (Vec<IpNet>, Vec<IpNet>)> = HashMap::new();
+    let mut country_map: HashMap<String, IpVecPair> = HashMap::new();
     for (cc, pair) in aggregated {
         country_map.insert(cc, pair);
     }
@@ -111,8 +127,8 @@ pub fn parse_all_country_codes(
 // 単一RIRテキストをパースし、国コード→(v4セット, v6セット)の部分結果を返す
 fn parse_one_rir_text_to_sets(
     text: &str,
-) -> Result<HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>, AppError> {
-    let mut country_sets: HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)> = HashMap::new();
+) -> Result<CountrySets, AppError> {
+    let mut country_sets: CountrySets = HashMap::new();
 
     for line in text.lines() {
         if line.starts_with('#') || line.contains('*') || line.contains("reserved") {

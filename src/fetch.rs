@@ -35,13 +35,11 @@ async fn read_body_with_limit_to_string(
 async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
     let resp = client.get(url).send().await?.error_for_status()?; // 非2xxを明示的にエラー化
 
-    if let Some(len) = resp.content_length() {
-        if len > MAX_RIR_DOWNLOAD_BYTES {
-            return Err(AppError::Other(format!(
-                "Response too large ({} bytes > {} bytes): {}",
-                len, MAX_RIR_DOWNLOAD_BYTES, url
-            )));
-        }
+    if resp.content_length().is_some_and(|len| len > MAX_RIR_DOWNLOAD_BYTES) {
+        return Err(AppError::Other(format!(
+            "Response too large (> {} bytes): {}",
+            MAX_RIR_DOWNLOAD_BYTES, url
+        )));
     }
     // Content-Length が無い場合にも備えて、常にストリーミングで上限制御
     read_body_with_limit_to_string(resp, MAX_RIR_DOWNLOAD_BYTES).await
@@ -104,13 +102,11 @@ pub async fn fetch_json_with_limit<T: serde::de::DeserializeOwned>(
 ) -> Result<T, AppError> {
     let resp = client.get(url).send().await?.error_for_status()?;
 
-    if let Some(len) = resp.content_length() {
-        if len > max_bytes {
-            return Err(AppError::Other(format!(
-                "JSON response too large ({} bytes > {} bytes): {}",
-                len, max_bytes, url
-            )));
-        }
+    if resp.content_length().is_some_and(|len| len > max_bytes) {
+        return Err(AppError::Other(format!(
+            "JSON response too large (> {} bytes): {}",
+            max_bytes, url
+        )));
     }
 
     // ボディを上限制御で読み込む

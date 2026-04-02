@@ -1,5 +1,13 @@
 use clap::Parser;
 
+fn parse_concurrency(s: &str) -> Result<usize, String> {
+    let n: usize = s.parse().map_err(|e| format!("{e}"))?;
+    if !(1..=64).contains(&n) {
+        return Err("concurrency must be between 1 and 64".into());
+    }
+    Ok(n)
+}
+
 fn parse_country_code(s: &str) -> Result<String, String> {
     let upper = s.to_ascii_uppercase();
     let valid = upper.chars().all(|c| c.is_ascii_alphabetic());
@@ -107,7 +115,7 @@ pub struct Cli {
         help = "Max concurrent AS queries.",
         required = false,
         default_value_t = 5usize,
-        value_parser = clap::value_parser!(usize)
+        value_parser = parse_concurrency
     )]
     pub concurrency: usize,
 

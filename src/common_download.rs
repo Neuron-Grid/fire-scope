@@ -62,5 +62,5 @@ pub async fn download_all_rir_files(
     retry_attempts: u32,
     max_backoff_secs: u64,
 ) -> Result<(Vec<String>, Vec<String>), AppError> {
-    download_files(client, &RIR_URLS, retry_attempts, max_backoff_secs).await
+    download_files(client, RIR_URLS, retry_attempts, max_backoff_secs).await
 }
