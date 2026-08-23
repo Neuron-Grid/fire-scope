@@ -1,5 +1,5 @@
-use fire_scope::ipv4_utils::{ipv4_summarize_range, largest_ipv4_block, parse_ipv4_range_to_cidrs};
 use fire_scope::error::AppError;
+use fire_scope::ipv4_utils::{ipv4_summarize_range, largest_ipv4_block, parse_ipv4_range_to_cidrs};
 use ipnet::Ipv4Net;
 use std::net::Ipv4Addr;
 

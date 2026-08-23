@@ -1,3 +1,4 @@
+use crate::common::debug_log;
 use crate::constants::MAX_RIR_DOWNLOAD_BYTES;
 use crate::error::AppError;
 use futures::StreamExt;
@@ -5,7 +6,6 @@ use rand::Rng;
 use reqwest::Client;
 use std::time::Duration;
 use tokio::time::sleep;
-use crate::common::debug_log;
 
 /// ボディをストリーミングで読み込みつつ、サイズ上限を強制してStringへ変換
 async fn read_body_with_limit_to_string(
@@ -35,7 +35,10 @@ async fn read_body_with_limit_to_string(
 async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
     let resp = client.get(url).send().await?.error_for_status()?; // 非2xxを明示的にエラー化
 
-    if resp.content_length().is_some_and(|len| len > MAX_RIR_DOWNLOAD_BYTES) {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_RIR_DOWNLOAD_BYTES)
+    {
         return Err(AppError::Other(format!(
             "Response too large (> {} bytes): {}",
             MAX_RIR_DOWNLOAD_BYTES, url

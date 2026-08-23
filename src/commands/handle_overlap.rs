@@ -1,5 +1,6 @@
 use crate::cli::Cli;
 use crate::common::OutputFormat;
+use crate::common::debug_log;
 use crate::common_download::download_all_rir_files;
 use crate::error::AppError;
 use crate::output::write_overlap_to_file;
@@ -8,7 +9,6 @@ use crate::parse::parse_all_country_codes;
 use ipnet::IpNet;
 use reqwest::Client;
 use std::collections::BTreeSet;
-use crate::common::debug_log;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -34,9 +34,7 @@ pub async fn run_overlap(
         }
     }
     if rir_texts_ok.is_empty() {
-        return Err(AppError::Other(
-            "No RIR files available to process".into(),
-        ));
+        return Err(AppError::Other("No RIR files available to process".into()));
     }
     let (country_ips_v4, country_ips_v6) =
         collect_country_ips(&country_codes, &rir_texts_ok).await?;
@@ -74,10 +72,8 @@ async fn collect_country_ips(
 ) -> Result<(BTreeSet<IpNet>, BTreeSet<IpNet>), AppError> {
     // 一度だけ全RIRテキストをパースし、国コード→(IPv4, IPv6)のマップを作成（CPU重）
     let rir_texts_owned = rir_texts.to_owned();
-    let country_map = tokio::task::spawn_blocking(move || {
-        parse_all_country_codes(&rir_texts_owned)
-    })
-    .await??;
+    let country_map =
+        tokio::task::spawn_blocking(move || parse_all_country_codes(&rir_texts_owned)).await??;
 
     let mut c_v4 = BTreeSet::new();
     let mut c_v6 = BTreeSet::new();

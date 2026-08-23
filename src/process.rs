@@ -1,6 +1,7 @@
-use crate::common::{IpSetPair, IpVecPair, OutputFormat, debug_log};
+use crate::common::{IpSetPair, IpVecPair, OutputFormat, aggregate_ipnets, debug_log};
 use crate::error::AppError;
 use crate::output::write_ip_lists_to_files;
+use futures::future::join_all;
 use ipnet::IpNet;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
@@ -31,10 +32,12 @@ pub async fn process_all_country_codes(
         }));
     }
 
-    // すべてのタスクを待機
-    for handle in tasks {
-        handle.await??;
-    }
+    join_all(tasks)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .collect::<Result<Vec<_>, AppError>>()?;
     Ok(())
 }
 
@@ -43,16 +46,12 @@ pub fn parse_and_collect_ips(
     country_code: &str,
     rir_texts: &[String],
 ) -> Result<IpSetPair, AppError> {
-    let mut all_v4 = Vec::new();
-    let mut all_v6 = Vec::new();
-    for text in rir_texts {
+    let nets = rir_texts.iter().try_fold(Vec::new(), |mut nets, text| {
         let (v4, v6) = crate::parse::parse_ip_lines(text, country_code)?;
-        all_v4.extend(v4);
-        all_v6.extend(v6);
-    }
-    let agg_v4 = IpNet::aggregate(&all_v4).into_iter().collect();
-    let agg_v6 = IpNet::aggregate(&all_v6).into_iter().collect();
-    Ok((agg_v4, agg_v6))
+        nets.extend(v4.into_iter().chain(v6));
+        Ok::<_, AppError>(nets)
+    })?;
+    Ok(aggregate_ipnets(nets))
 }
 
 pub async fn process_country_code_from_map(

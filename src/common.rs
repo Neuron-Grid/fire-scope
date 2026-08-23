@@ -9,6 +9,15 @@ pub type IpVecPair = (Vec<IpNet>, Vec<IpNet>);
 /// IPv4/IPv6 の BTreeSet ペア（重複排除済み）
 pub type IpSetPair = (BTreeSet<IpNet>, BTreeSet<IpNet>);
 
+pub(crate) fn partition_ipnets(nets: impl IntoIterator<Item = IpNet>) -> IpSetPair {
+    nets.into_iter()
+        .partition(|net| matches!(net, IpNet::V4(_)))
+}
+
+pub(crate) fn aggregate_ipnets(nets: impl IntoIterator<Item = IpNet>) -> IpSetPair {
+    partition_ipnets(IpNet::aggregate(&nets.into_iter().collect::<Vec<_>>()))
+}
+
 static DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// デバッグの有効/無効を設定
@@ -91,5 +100,45 @@ impl FromStr for OutputFormat {
             "txt" | "" => Ok(OutputFormat::Txt),
             _ => Err("Invalid output format. Valid options: 'txt' or 'nft'"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{aggregate_ipnets, partition_ipnets};
+    use ipnet::IpNet;
+    use std::str::FromStr;
+
+    fn net(cidr: &str) -> Option<IpNet> {
+        IpNet::from_str(cidr).ok()
+    }
+
+    #[test]
+    fn ipnet_helpers_partition_and_aggregate_without_changing_input() {
+        let input = [
+            net("192.0.2.0/25"),
+            net("192.0.2.128/25"),
+            net("2001:db8::/32"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let original = input.clone();
+
+        let (partitioned_v4, partitioned_v6) = partition_ipnets(input.iter().copied());
+        let (aggregated_v4, aggregated_v6) = aggregate_ipnets(input.iter().copied());
+
+        assert_eq!(input, original);
+        assert_eq!(partitioned_v4.len(), 2);
+        assert_eq!(partitioned_v6.len(), 1);
+        assert_eq!(
+            aggregated_v4
+                .iter()
+                .next()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("192.0.2.0/24")
+        );
+        assert_eq!(aggregated_v6, partitioned_v6);
     }
 }

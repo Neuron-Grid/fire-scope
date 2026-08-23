@@ -36,3 +36,26 @@ fn parse_all_country_codes_aggregates_per_country() {
     let v4s: Vec<String> = v4.iter().map(|n| n.to_string()).collect();
     assert_eq!(v4s, vec!["10.0.0.0/24".to_string()]);
 }
+
+#[test]
+fn parser_filters_non_allocations_and_propagates_selected_record_errors() {
+    let ignored = [
+        "# comment",
+        "short|line",
+        "apnic|JP|ipv4|10.0.0.0|256|20200101|reserved",
+        "apnic|JP|ipv4|10.0.1.0|256|20200101|available",
+        "apnic|JP|asn|1234|1|20200101|allocated",
+    ]
+    .join("\n");
+
+    let (v4, v6) = parse_ip_lines(&ignored, "jp")
+        .unwrap_or_else(|error| panic!("unexpected parse error: {error}"));
+    assert!(v4.is_empty());
+    assert!(v6.is_empty());
+
+    let invalid_selected = "apnic|JP|ipv4|invalid|256|20200101|allocated\n";
+    assert!(parse_ip_lines(invalid_selected, "JP").is_err());
+
+    let invalid_other = "apnic|US|ipv4|invalid|256|20200101|allocated\n";
+    assert!(parse_ip_lines(invalid_other, "JP").is_ok());
+}

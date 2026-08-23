@@ -1,9 +1,9 @@
-use crate::common::debug_log;
-use crate::common::{IpFamily, OutputFormat};
+use crate::common::{IpFamily, OutputFormat, aggregate_ipnets, debug_log};
 use crate::constants::MAX_JSON_DOWNLOAD_BYTES;
 use crate::error::AppError;
 use crate::fetch::fetch_json_with_limit;
 use crate::output::write_as_ip_list_to_file;
+use futures::future::join_all;
 use ipnet::IpNet;
 use reqwest::Client;
 use serde_json::Value;
@@ -106,20 +106,7 @@ async fn fetch_arin_originas_prefixes(
 
 /// Vec<IpNet> → (IPv4, IPv6) 集合に分割し aggregate
 fn dedup_and_partition(nets: &[IpNet]) -> (BTreeSet<IpNet>, BTreeSet<IpNet>) {
-    let agg = IpNet::aggregate(&nets.to_vec());
-    let mut v4 = BTreeSet::new();
-    let mut v6 = BTreeSet::new();
-    for net in agg {
-        match net {
-            IpNet::V4(_) => {
-                v4.insert(net);
-            }
-            IpNet::V6(_) => {
-                v6.insert(net);
-            }
-        }
-    }
-    (v4, v6)
+    aggregate_ipnets(nets.iter().copied())
 }
 
 /// 複数 AS を並列取得してファイル出力
@@ -153,14 +140,18 @@ pub async fn process_as_numbers(
         })
         .collect::<Vec<_>>();
 
-    let mut outcomes = Vec::with_capacity(handles.len());
-    for h in handles {
-        let outcome = h.await??;
-        if let Err(ref e) = outcome.1 {
-            eprintln!("Warning: failed to process AS{}: {}", outcome.0, e);
-        }
-        outcomes.push(outcome);
-    }
+    let outcomes = join_all(handles)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .collect::<Result<Vec<_>, AppError>>()?;
+    outcomes
+        .iter()
+        .filter_map(|(asn, result)| result.as_ref().err().map(|error| (asn, error)))
+        .for_each(|(asn, error)| {
+            eprintln!("Warning: failed to process AS{asn}: {error}");
+        });
 
     finalize_as_processing(outcomes)
 }

@@ -30,9 +30,7 @@ pub async fn run_country_codes(
     }
 
     if rir_texts.is_empty() {
-        return Err(AppError::Other(
-            "No RIR files available to process".into(),
-        ));
+        return Err(AppError::Other("No RIR files available to process".into()));
     }
 
     // 成功したrir_textsだけをもとに国コード解析を実施

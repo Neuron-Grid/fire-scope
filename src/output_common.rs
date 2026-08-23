@@ -55,18 +55,17 @@ pub async fn write_list_txt<P: AsRef<Path>>(
     ipnets: &BTreeSet<IpNet>,
     header: &str,
 ) -> Result<(), AppError> {
+    let content = render_txt(ipnets, header);
+    atomic_write(path.as_ref(), content.as_bytes()).await
+}
+
+fn render_txt(ipnets: &BTreeSet<IpNet>, header: &str) -> String {
     let body = ipnets
         .iter()
         .map(|net| net.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-
-    let content = format!("{}{}\n", header, body);
-
-    // 常に上書き（原子的に安全な書き込み）
-    atomic_write(path.as_ref(), content.as_bytes()).await?;
-
-    Ok(())
+    format!("{header}{body}\n")
 }
 
 pub async fn write_list_nft<P: AsRef<Path>>(
@@ -81,22 +80,22 @@ pub async fn write_list_nft<P: AsRef<Path>>(
         .unwrap_or("unknown_define");
     let define_name = sanitize_identifier(define_name_raw);
 
-    let mut content = String::new();
-    content.push_str(header);
-    content.push_str(&format!("define {} = {{\n", define_name));
+    let content = render_nft(ipnets, header, &define_name);
+    atomic_write(file_path, content.as_bytes()).await
+}
 
-    if !ipnets.is_empty() {
-        let lines: Vec<String> = ipnets.iter().map(|n| format!("    {}", n)).collect();
-        content.push_str(&lines.join(",\n"));
-        content.push('\n');
-    }
-
-    content.push_str("}\n");
-
-    // 常に上書き（原子的に安全な書き込み）
-    atomic_write(file_path, content.as_bytes()).await?;
-
-    Ok(())
+fn render_nft(ipnets: &BTreeSet<IpNet>, header: &str, define_name: &str) -> String {
+    let entries = ipnets
+        .iter()
+        .map(|net| format!("    {net}"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let body = if entries.is_empty() {
+        String::new()
+    } else {
+        format!("{entries}\n")
+    };
+    format!("{header}define {define_name} = {{\n{body}}}\n")
 }
 
 /// 一時ファイルに書いてから `rename` で置換する。
@@ -131,5 +130,33 @@ async fn atomic_write(path: &Path, content: &[u8]) -> Result<(), AppError> {
             let _ = fs::remove_file(&tmp_path).await;
             Err(e.into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_nft, render_txt};
+    use ipnet::IpNet;
+    use std::{collections::BTreeSet, str::FromStr};
+
+    fn sample_ipnets() -> BTreeSet<IpNet> {
+        ["192.0.2.0/24", "2001:db8::/32"]
+            .into_iter()
+            .filter_map(|cidr| IpNet::from_str(cidr).ok())
+            .collect()
+    }
+
+    #[test]
+    fn renderers_are_deterministic() {
+        let ipnets = sample_ipnets();
+
+        assert_eq!(
+            render_txt(&ipnets, "# header\n"),
+            "# header\n192.0.2.0/24\n2001:db8::/32\n"
+        );
+        assert_eq!(
+            render_nft(&ipnets, "# header\n", "routes"),
+            "# header\ndefine routes = {\n    192.0.2.0/24,\n    2001:db8::/32\n}\n"
+        );
     }
 }

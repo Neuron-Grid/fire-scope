@@ -1,6 +1,6 @@
 use clap::Parser;
 use fire_scope::cli::Cli;
-use fire_scope::common::{set_debug, OutputFormat};
+use fire_scope::common::{OutputFormat, set_debug};
 use fire_scope::error::AppError;
 use std::str::FromStr;
 use std::time::Duration;
