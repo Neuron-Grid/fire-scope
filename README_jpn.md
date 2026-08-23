@@ -1,126 +1,185 @@
-## fire-scope
-各地域インターネットレジストリ (RIR) が提供する最新のアドレス割り当てファイルを取得し、指定された国コードに合致するIPv4/v6アドレスブロックをテキストファイルにまとめて出力するためのCLIアプリです。
-また、指定されたAS番号も取得し、同様にテキストファイルに出力できます。
+# fire-scope
+
+`fire-scope` は、国コードまたはAS番号に対応するIPv4/IPv6 CIDRを取得・集約し、TXTまたはnftables形式で出力するCLIです。国別CIDRとAS別CIDRの重複部分も計算できます。
 
 ## 特徴
-- 複数のRIR(AFRINIC, LACNIC, RIPE, APNIC, ARIN)から最新のデータをダウンロード
-- 最大10回までのリトライと指数バックオフ+ランダムスリープで安定取得を試行
-- 国コードごとにフィルタし、重複のないサブネットリスト(IPv4 / IPv6)を出力
-- Tokioを使用した高速なダウンロード・処理
-- 出力ファイルはIPv4_XX.txt / IPv6_XX.txt (XX は国コード)として自動生成
 
-## 出力形式
-- IPv4_XX.txt / IPv6_XX.txt
-  - XXは任意の国コードです。
-- 1行に1つのサブネットが記載されています。
-- 最初の1行目には実行日時が記載されます。
+- AFRINIC、LACNIC、RIPE NCC、APNIC、ARINの委任統計から国別CIDRを生成
+- RIPEstatとARIN RDAPからASの発表プレフィックスを取得
+- CIDRの重複排除と集約により、決定的な順序で出力
+- RIR取得のリトライ、Full Jitter付き指数バックオフ、部分失敗ポリシーを設定可能
+- HTTPレスポンスをストリーミング処理し、RIRは32 MiB、JSONは8 MiBに制限
+- カレントディレクトリへTXTまたはnftables形式でatomic上書き
+
+## 動作条件
+
+- Rust 1.85以降
+- 外部のRIR、RIPEstat、ARIN RDAPへHTTPS接続できる環境
+- 実行時のカレントディレクトリに対する書込権限
+
+## インストール
+
+crates.ioからインストールする場合、任意のディレクトリで実行します。
+
+```zsh
+cargo install fire-scope
+```
+
+ソースからインストールする場合、リポジトリルートで実行します。
+
+```zsh
+cargo install --path "."
+```
+
+## CLI
+
+バージョン0.2.0ではCLIが破壊的に変更されています。旧 `-c`、`-a`、`-o` 構文は使用できません。
+
+```text
+fire-scope [GLOBAL OPTIONS] <COMMAND>
+
+Commands:
+  list country <COUNTRY_CODE>...
+  list asn <AS_NUMBER>...
+  overlap --country <COUNTRY_CODE>... --asn <AS_NUMBER>...
+```
+
+国コードは2〜3文字のASCII英字だけを受け付け、内部で大文字化します。AS番号は `u32` の範囲で指定します。
+
+### 国別リスト
+
+インストール後、出力先にするディレクトリで実行します。
+
+```zsh
+fire-scope list country jp us
+```
+
+### AS別リスト
+
+```zsh
+fire-scope list asn 1234 65000
+```
+
+### 国別リストとAS別リストの重複
+
+指定した国のCIDR集合とASのCIDR集合をそれぞれ結合してから、両集合の重複部分を出力します。
+
+```zsh
+fire-scope overlap --country jp us --asn 1234 65000
+```
+
+### グローバルオプション
+
+| オプション | 説明 | 既定値 |
+|---|---|---|
+| `-f, --format <txt\|nft>` | 出力形式 | `txt` |
+| `--http-timeout-secs <SEC>` | HTTPリクエスト全体のタイムアウト秒数。0は不可 | `20` |
+| `--connect-timeout-secs <SEC>` | HTTP接続のタイムアウト秒数。0は不可 | `10` |
+| `-d, --debug` | デバッグ情報をstderrへ出力 | 無効 |
+| `-h, --help` | ヘルプを表示 | - |
+| `-V, --version` | バージョンを表示 | - |
+
+### RIR取得オプション
+
+`list country` と `overlap` で使用できます。
+
+| オプション | 説明 | 既定値 |
+|---|---|---|
+| `--rir-attempts <N>` | RIRごとのHTTP試行回数。0は不可 | `6` |
+| `--max-backoff-secs <SEC>` | Full Jitter付き指数バックオフの上限秒数。0は不可 | `16` |
+| `--continue-on-partial` | 一部のRIR取得に失敗しても成功分で続行 | 無効 |
+
+既定では、1件でもRIR取得に失敗するとエラー終了します。`--continue-on-partial` 指定時は警告を出し、取得できたRIRだけで続行します。全RIR取得失敗時は常にエラー終了します。
+
+```zsh
+fire-scope list country jp us --rir-attempts 3 --max-backoff-secs 8 --continue-on-partial
+```
+
+### AS取得オプション
+
+`list asn` と `overlap` で使用できます。
+
+| オプション | 説明 | 既定値 |
+|---|---|---|
+| `-C, --concurrency <N>` | AS問い合わせの同時実行数。`1..=64` | `5` |
+
+```zsh
+fire-scope list asn 1234 65000 -C 10
+```
+
+`list asn` は取得に成功したASのファイルを書き、失敗したASをstderrへまとめて報告して非0で終了します。`overlap` はAS取得が1件でも失敗すると重複ファイルを書かず、非0で終了します。
 
 ## 情報の取得元
-- `-c`を指定した場合の取得元
-  - [AFRINIC](https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest)
-  - [LACNIC](https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest)
-  - [RIPE NCC](https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest)
-  - [APNIC](https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest)
-  - [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
 
-- `-a`を指定した場合の取得元
-  - RIPEstat Announced Prefixes API（優先）
-  - ARIN RDAP OriginAS networks（フォールバック）
+国別リストは以下のRIR委任統計を使用します。
 
-## 使い方
-### インストール
-```bash
-$ cargo install fire-scope
+- [AFRINIC](https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest)
+- [LACNIC](https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest)
+- [RIPE NCC](https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest)
+- [APNIC](https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest)
+- [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
+
+AS別リストは次の規則で取得します。
+
+- RIPEstat Announced Prefixes APIが成功した場合、ARIN RDAP OriginASの成功分もbest-effortで併合
+- RIPEstatが失敗した場合、ARIN RDAP OriginASを必須fallbackとして使用
+- RIPEstatとARINの両方が失敗した場合、そのASの取得を失敗として扱う
+
+ARINのOriginASデータは地域・登録状況により網羅的でない場合があります。
+
+## 出力
+
+出力先は実行時のカレントディレクトリです。同名ファイルは一時ファイルへの書込後に置換します。
+
+| コマンド | IPv4出力例 | IPv6出力例 |
+|---|---|---|
+| `list country jp` | `IPv4_JP.txt` | `IPv6_JP.txt` |
+| `list asn 1234` | `AS_1234_IPv4.txt` | `AS_1234_IPv6.txt` |
+| `overlap --country jp --asn 1234` | `overlap_JP_1234_IPv4.txt` | `overlap_JP_1234_IPv6.txt` |
+
+`nft` 指定時は拡張子が `.nft` になり、ファイル名から生成した識別子を `define` 名として使用します。重複がないIP familyや、取得プレフィックスがないASのIP familyについてはファイルを生成しません。
+
+各ファイルの先頭には生成日時、国コード、AS番号をコメントとして記録します。TXTは1行1CIDR、nftables形式は以下の構文です。
+
+```zsh
+fire-scope -f nft list country jp
 ```
 
-### 実行例
-- **注意**
-  - `-c`か`-a`のどちらか一方は必ず指定してください。
-  - 指定しなかった場合はエラーが発生します。
-```bash
-$ fire-scope -c jp us
+```nft
+define IPv4_JP = {
+    192.0.2.0/24,
+    198.51.100.0/24
+}
 ```
 
-```bash
-$ fire-scope -a 0000 1234
-```
+生成ファイルを配置した後、nftables設定から読み込みます。
 
-```bash
-$ fire-scope -c jp us -a 0000 1234 -o
-```
-
-### オプション
-- `-c` : 国コードを指定します。複数指定可能です。
-- `-a` : AS番号を指定します。複数指定可能です。
-- `-h` : ヘルプを表示します。
-- `-v` : バージョンを表示します。
-- `-o` : 指定された国コードとAS番号のIPv4/v6アドレスのうち、重複している部分のIPアドレスを出力します。
-  - 性質上、`-c`と`-a`の両方の指定が必須事項です。
-
-- 取得/実行の調整用オプション
-  - `--format {txt|nft}`: 出力形式（既定: `txt`）
-  - `--max-retries <N>`: HTTPリトライ回数（既定: 6）
-  - `--max-backoff-sec <SEC>`: 指数バックオフの最大秒数（既定: 16）
-  - `--http-timeout-secs <SEC>`: HTTPの総合タイムアウト秒（既定: 20）
-  - `--connect-timeout-secs <SEC>`: 接続タイムアウト秒（既定: 10）
-  - `--concurrency <N>`: ASクエリの同時実行数（既定: 5）
-  - `--continue-on-partial`: RIRダウンロードに一部失敗しても成功分で処理を続行します（既定: 無効＝厳格）
-
-### 一部失敗時の挙動（重要）
-- 既定では、RIRファイルのダウンロードに1つでも失敗するとエラー終了します。
-- `--continue-on-partial`を付けると、成功したRIRファイルのみで処理を続行します（警告を表示）。
-- どちらのモードでも「全て失敗」の場合はエラー終了します。
-
-### nftablesでの利用例
-1) nft形式で出力
-```bash
-fire-scope -c jp --format nft
-```
-`IPv4_JP.nft` / `IPv6_JP.nft` が生成され、それぞれ
-`define IPv4_JP = { ... }` / `define IPv6_JP = { ... }` が含まれます。
-
-2) nftables設定へ取り込み（例）
 ```nft
 include "/etc/nftables/IPv4_JP.nft"
 include "/etc/nftables/IPv6_JP.nft"
 
 table inet filter {
-  chain input {
-    type filter hook input priority 0;
-    ip  saddr $IPv4_JP accept   # IPv4定義の参照
-    ip6 saddr $IPv6_JP accept   # IPv6定義の参照
-  }
+    chain input {
+        type filter hook input priority 0;
+        ip saddr $IPv4_JP accept
+        ip6 saddr $IPv6_JP accept
+    }
 }
 ```
-生成ファイルを適切なパスに配置してから`include`してください。
 
-### 終了コード
-- 0: 正常終了
-- 非0: 無効な引数（`-c`/`-a`未指定など）、ネットワーク/HTTP失敗（厳格モード）、RIRファイルが1つも利用不可、ファイル書込失敗 など
+## 終了コード
 
-- **注意事項**<br>
-`-c`か`-a`のどちらか一方は必ず指定してください。
-指定しなかった場合はエラーで非0終了します。
+- `0`: 処理と必要な出力が完了
+- 非0: 引数不正、ネットワーク/HTTP失敗、厳格モードでのRIR部分失敗、全RIR失敗、AS取得失敗、解析失敗、ファイル書込失敗など
 
-- 既存の出力ファイルがある場合は常に上書きします。
+## セキュリティと制限
 
-## セキュリティ補足
-- RIRのダウンロードはストリーミングで読み込むため、`Content-Length`ヘッダが無い場合でも32MiB超で即中断します。
-- RIPEstat/ARINのJSON応答もストリーミングで読み込み、8MiBを上限に制限します。
-
-## 既知の制限
-- ASの発表プレフィックスはRIPEstatを優先し、失敗時はARIN RDAPへフォールバックします。
-- 現時点ではRPKI検証はデフォルト無効です（内部コードはありますがCLI未公開）。
-- 外部API/ファイルの可用性に依存します。`--max-retries`/`--max-backoff-sec`で調整可能です。
-
-## 動作条件
-- 最新の安定版Rust（Edition 2024対応）を推奨します。`rustup update stable`で更新してください。
-
-## 推奨オプション例
-- 取得安定性を保ちつつ迅速化:
-  - `fire-scope -c jp us --max-retries 3 --max-backoff-sec 8 --continue-on-partial`
-- AS問い合わせを並列に高速化:
-  - `fire-scope -a 1234 65000 -C 10`
+- 国コードを入力境界で検証し、ファイル名とnftables識別子もサニタイズします。
+- HTTPの総合タイムアウトと接続タイムアウトを設定します。
+- `Content-Length` がない応答にもストリーミング上限を適用します。
+- RPKI検証は行いません。出力は各取得元が返す委任情報・発表情報に基づきます。
+- 結果は外部RIR/APIの可用性と内容に依存します。
 
 ## ライセンス
+
 [MPL-2.0](./LICENSE.txt)

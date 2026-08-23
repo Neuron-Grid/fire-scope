@@ -1,147 +1,190 @@
-use crate::common::IpVecPair;
 use crate::error::AppError;
+use crate::ip::{IpFamily, IpSets};
 use ipnet::{IpNet, Ipv6Net};
-use rayon::join;
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 
-type CountrySets = HashMap<String, (BTreeSet<IpNet>, BTreeSet<IpNet>)>;
+type CountrySets = HashMap<String, IpSets>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct RirAllocation<'a> {
     country_code: &'a str,
-    ip_type: &'a str,
+    family: IpFamily,
     start: &'a str,
     value: &'a str,
 }
 
 impl<'a> RirAllocation<'a> {
     fn from_line(line: &'a str) -> Option<Self> {
-        if line.starts_with('#') || line.contains('*') || line.contains("reserved") {
+        if line.starts_with('#') {
             return None;
         }
 
         let mut fields = line.split('|');
         let _registry = fields.next()?;
         let country_code = fields.next()?;
-        let ip_type = fields.next()?;
+        let family = IpFamily::from_str(fields.next()?).ok()?;
         let start = fields.next()?;
         let value = fields.next()?;
         let _date = fields.next()?;
         let status = fields.next()?;
 
-        (matches!(ip_type, "ipv4" | "ipv6")
-            && matches!(
-                status.to_ascii_lowercase().as_str(),
-                "allocated" | "assigned"
-            ))
-        .then_some(Self {
-            country_code,
-            ip_type,
-            start,
-            value,
-        })
+        (status.eq_ignore_ascii_case("allocated") || status.eq_ignore_ascii_case("assigned"))
+            .then_some(Self {
+                country_code,
+                family,
+                start,
+                value,
+            })
     }
 
-    fn parse_nets(&self) -> Result<Vec<IpNet>, AppError> {
-        match self.ip_type {
-            "ipv4" => crate::ipv4_utils::parse_ipv4_range_to_cidrs(self.start, self.value),
-            "ipv6" => parse_ipv6_range(self.start, self.value),
-            _ => Ok(Vec::new()),
+    fn parse_nets(self) -> Result<Vec<IpNet>, AppError> {
+        match self.family {
+            IpFamily::V4 => crate::ipv4_utils::parse_ipv4_range_to_cidrs(self.start, self.value),
+            IpFamily::V6 => parse_ipv6_range(self.start, self.value),
         }
     }
 }
 
-/// RIR 拡張フォーマットのテキストから指定国コードの IPv4/IPv6 を抽出する。
-///
-/// # Examples
-///
-/// ```
-/// use fire_scope::parse::parse_ip_lines;
-///
-/// let text = "apnic|JP|ipv4|192.168.0.0|256|20200101|allocated\n";
-/// let (v4, v6) = parse_ip_lines(text, "JP").unwrap();
-/// assert_eq!(v4.len(), 1);
-/// assert_eq!(v4[0].to_string(), "192.168.0.0/24");
-/// assert!(v6.is_empty());
-/// ```
-pub fn parse_ip_lines(text: &str, country_code: &str) -> Result<IpVecPair, AppError> {
-    text.lines()
-        .filter_map(RirAllocation::from_line)
-        .filter(|allocation| allocation.country_code.eq_ignore_ascii_case(country_code))
-        .try_fold((Vec::new(), Vec::new()), |mut lists, allocation| {
-            let target = if allocation.ip_type == "ipv4" {
-                &mut lists.0
-            } else {
-                &mut lists.1
-            };
-            target.extend(allocation.parse_nets()?);
-            Ok(lists)
-        })
+fn parse_ipv6_range(start: &str, prefix: &str) -> Result<Vec<IpNet>, AppError> {
+    let cidr = format!("{start}/{prefix}");
+    cidr.parse::<Ipv6Net>()
+        .map(|net| vec![IpNet::V6(net)])
+        .map_err(|error| AppError::ParseError(format!("IPv6 network parse error: {error}")))
 }
 
-fn parse_ipv6_range(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
-    let cidr = format!("{}/{}", start_str, value_str);
-    let net = cidr
-        .parse::<Ipv6Net>()
-        .map_err(|e| AppError::ParseError(format!("Ipv6Net parse error: {e}")))?;
-    Ok(vec![IpNet::V6(net)])
-}
-
-pub fn parse_all_country_codes(
+pub(crate) fn parse_all_country_codes(
     rir_texts: &[String],
-) -> Result<HashMap<String, IpVecPair>, AppError> {
-    // RIRファイル単位のパースをrayonで並列化し、結果を順次マージ
-    let partials: Vec<Result<CountrySets, AppError>> = rir_texts
+    country_codes: &[String],
+) -> Result<CountrySets, AppError> {
+    let selected = country_codes
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let partials = rir_texts
         .par_iter()
-        .map(|text| parse_one_rir_text_to_sets(text))
-        .collect();
+        .map(|text| parse_one_rir_text(text, &selected))
+        .collect::<Result<Vec<_>, AppError>>()?;
 
-    let country_sets =
-        partials
-            .into_iter()
-            .try_fold(CountrySets::new(), |mut countries, partial| {
-                partial?.into_iter().for_each(|(country_code, (v4, v6))| {
-                    let entry = countries.entry(country_code).or_default();
-                    entry.0.extend(v4);
-                    entry.1.extend(v6);
-                });
-                Ok::<_, AppError>(countries)
-            })?;
+    let merged = partials.into_iter().flatten().fold(
+        CountrySets::new(),
+        |mut countries, (country_code, sets)| {
+            let entry = countries.entry(country_code).or_default();
+            *entry = std::mem::take(entry).merge(sets);
+            countries
+        },
+    );
 
-    // 集約してVecへ変換（最小CIDR化）— 国ごとに並列実行
-    let aggregated: Vec<(String, IpVecPair)> = country_sets
-        .into_iter()
-        .collect::<Vec<_>>()
+    Ok(merged
         .into_par_iter()
-        .map(|(cc, (v4set, v6set))| {
-            let v4_vec = v4set.iter().copied().collect::<Vec<_>>();
-            let v6_vec = v6set.iter().copied().collect::<Vec<_>>();
-
-            let (agg_v4, agg_v6) = join(|| IpNet::aggregate(&v4_vec), || IpNet::aggregate(&v6_vec));
-
-            (cc, (agg_v4, agg_v6))
-        })
-        .collect();
-
-    Ok(aggregated.into_iter().collect())
+        .map(|(country_code, sets)| (country_code, sets.aggregated()))
+        .collect())
 }
 
-// 単一RIRテキストをパースし、国コード→(v4セット, v6セット)の部分結果を返す
-fn parse_one_rir_text_to_sets(text: &str) -> Result<CountrySets, AppError> {
+fn parse_one_rir_text(
+    text: &str,
+    selected_country_codes: &HashSet<&str>,
+) -> Result<CountrySets, AppError> {
     text.lines().filter_map(RirAllocation::from_line).try_fold(
         CountrySets::new(),
         |mut countries, allocation| {
-            let entry = countries
-                .entry(allocation.country_code.to_uppercase())
-                .or_default();
-            let target = if allocation.ip_type == "ipv4" {
-                &mut entry.0
-            } else {
-                &mut entry.1
-            };
-            target.extend(allocation.parse_nets()?);
+            let country_code = allocation.country_code.to_ascii_uppercase();
+            if !selected_country_codes.contains(country_code.as_str()) {
+                return Ok(countries);
+            }
+            let parsed = allocation.parse_nets()?.into_iter().collect();
+            let entry = countries.entry(country_code).or_default();
+            *entry = std::mem::take(entry).merge(parsed);
             Ok(countries)
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_all_country_codes;
+    use crate::error::AppError;
+
+    #[test]
+    fn parses_selected_allocations_by_family() -> Result<(), AppError> {
+        let text = [
+            "# comment",
+            "apnic|JP|ipv4|1.2.3.0|256|20200101|allocated",
+            "apnic|JP|ipv4|1.2.4.0|256|20200101|available",
+            "apnic|jp|IPV6|2001:db8::|32|20200101|ASSIGNED",
+            "ripe|US|ipv4|203.0.113.0|256|20200101|allocated",
+            "apnic|JP|asn|12345|1|20200101|allocated",
+        ]
+        .join("\n");
+
+        let countries = parse_all_country_codes(&[text], &["JP".to_owned()])?;
+        let sets = countries
+            .get("JP")
+            .ok_or_else(|| AppError::Other("JP test records are missing".into()))?;
+        assert_eq!(
+            sets.ipv4()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["1.2.3.0/24"]
+        );
+        assert_eq!(
+            sets.ipv6()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["2001:db8::/32"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ignores_non_allocations_and_only_parses_selected_records() -> Result<(), AppError> {
+        let ignored = [
+            "# comment",
+            "short|line",
+            "apnic|JP|ipv4|10.0.0.0|256|20200101|reserved",
+            "apnic|JP|ipv4|10.0.1.0|256|20200101|available",
+            "apnic|JP|asn|1234|1|20200101|allocated",
+        ]
+        .join("\n");
+
+        assert!(parse_all_country_codes(&[ignored], &["JP".to_owned()])?.is_empty());
+        assert!(
+            parse_all_country_codes(
+                &["apnic|JP|ipv4|invalid|256|20200101|allocated\n".to_owned()],
+                &["JP".to_owned()],
+            )
+            .is_err()
+        );
+        assert!(
+            parse_all_country_codes(
+                &["apnic|US|ipv4|invalid|256|20200101|allocated\n".to_owned()],
+                &["JP".to_owned()],
+            )
+            .is_ok()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn aggregates_selected_country_across_rir_files() -> Result<(), AppError> {
+        let texts = [
+            "apnic|JP|ipv4|10.0.0.0|128|20200101|allocated\n".to_owned(),
+            "apnic|jp|ipv4|10.0.0.128|128|20200101|allocated\n".to_owned(),
+        ];
+
+        let countries = parse_all_country_codes(&texts, &["JP".to_owned()])?;
+        assert_eq!(
+            countries.get("JP").map(|sets| {
+                sets.ipv4()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            }),
+            Some(vec!["10.0.0.0/24".to_owned()])
+        );
+        Ok(())
+    }
 }

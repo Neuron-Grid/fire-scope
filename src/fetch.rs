@@ -1,120 +1,149 @@
-use crate::common::debug_log;
 use crate::constants::MAX_RIR_DOWNLOAD_BYTES;
+use crate::diagnostics::DebugOutput;
 use crate::error::AppError;
 use futures::StreamExt;
-use rand::Rng;
 use reqwest::Client;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// ボディをストリーミングで読み込みつつ、サイズ上限を強制してStringへ変換
 async fn read_body_with_limit_to_string(
-    resp: reqwest::Response,
+    response: reqwest::Response,
     max_bytes: u64,
 ) -> Result<String, AppError> {
-    let mut total: u64 = 0;
-    let mut buf: Vec<u8> = Vec::new();
+    let mut total = 0u64;
+    let mut buffer = Vec::new();
+    let mut stream = response.bytes_stream();
 
-    let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk?; // reqwest::Error -> AppError::Network via ? 上位で変換
-        total = total.saturating_add(chunk.len() as u64);
+        let chunk = chunk?;
+        let chunk_len = u64::try_from(chunk.len())
+            .map_err(|_| AppError::Other("Response chunk length exceeds u64".into()))?;
+        total = total
+            .checked_add(chunk_len)
+            .ok_or_else(|| AppError::Other("Response size overflow".into()))?;
         if total > max_bytes {
             return Err(AppError::Other(format!(
-                "Response too large ({} bytes > {} bytes)",
-                total, max_bytes
+                "Response too large ({total} bytes > {max_bytes} bytes)"
             )));
         }
-        buf.extend_from_slice(&chunk);
+        buffer.extend_from_slice(&chunk);
     }
 
-    let text = String::from_utf8(buf)?; // FromUtf8Error -> AppError::Utf8
-    Ok(text)
+    String::from_utf8(buffer).map_err(AppError::from)
 }
 
 async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
-    let resp = client.get(url).send().await?.error_for_status()?; // 非2xxを明示的にエラー化
+    let response = client.get(url).send().await?.error_for_status()?;
 
-    if resp
+    if response
         .content_length()
-        .is_some_and(|len| len > MAX_RIR_DOWNLOAD_BYTES)
+        .is_some_and(|length| length > MAX_RIR_DOWNLOAD_BYTES)
     {
         return Err(AppError::Other(format!(
-            "Response too large (> {} bytes): {}",
-            MAX_RIR_DOWNLOAD_BYTES, url
+            "Response too large (> {MAX_RIR_DOWNLOAD_BYTES} bytes): {url}"
         )));
     }
-    // Content-Length が無い場合にも備えて、常にストリーミングで上限制御
-    read_body_with_limit_to_string(resp, MAX_RIR_DOWNLOAD_BYTES).await
+
+    read_body_with_limit_to_string(response, MAX_RIR_DOWNLOAD_BYTES).await
 }
 
-/// HTTP GETによるデータ取得をリトライ+指数バックオフ付きで行う
-/// 失敗時はAppError::Other(...)を返す
-pub async fn fetch_with_retry(
+pub(crate) async fn fetch_with_retry(
     client: &Client,
     url: &str,
-    retry_attempts: u32,
-    max_backoff_secs: u64,
+    retry_attempts: NonZeroU32,
+    max_backoff_secs: NonZeroU64,
+    debug: DebugOutput,
 ) -> Result<String, AppError> {
-    let attempts = retry_attempts.max(1);
-    for i in 0..attempts {
+    let attempts = retry_attempts.get();
+    for retry_count in 0..attempts {
         match fetch_once(client, url).await {
-            Ok(text) => {
-                return Ok(text);
-            }
-            Err(e) => {
-                debug_log(format!(
+            Ok(text) => return Ok(text),
+            Err(error) => {
+                debug.log(format!(
                     "fetch attempt {}/{} failed: {}",
-                    i + 1,
+                    retry_count.saturating_add(1),
                     attempts,
-                    e
+                    error
                 ));
-                // 最終試行後はスリープせずに即エラー復帰
-                if i + 1 < attempts {
-                    let sleep_duration = calc_exponential_backoff_duration(i, max_backoff_secs);
-                    sleep(sleep_duration).await;
+                if retry_count.saturating_add(1) < attempts {
+                    let jitter_fraction = rand::random::<f64>();
+                    sleep(exponential_backoff_duration(
+                        retry_count,
+                        max_backoff_secs,
+                        jitter_fraction,
+                    ))
+                    .await;
                 }
             }
         }
     }
 
-    // リトライ失敗
     Err(AppError::Other(format!(
-        "Failed to fetch data from {} after {} attempts",
-        url, attempts
+        "Failed to fetch data from {url} after {attempts} attempts"
     )))
 }
 
-/// 指数バックオフのスリープ時間を計算するヘルパー関数
-fn calc_exponential_backoff_duration(retry_count: u32, max_backoff_secs: u64) -> Duration {
-    // Full Jitter
-    // wait ~ Uniform(0, min(cap, 2^retry))
-    let mut rng = rand::rng();
-    let exp = 2u64.saturating_pow(retry_count);
-    let cap = max_backoff_secs.max(1);
-    let range = exp.min(cap) as f64;
-    let wait_secs = rng.random::<f64>() * range;
-    Duration::from_secs_f64(wait_secs)
+fn exponential_backoff_duration(
+    retry_count: u32,
+    max_backoff_secs: NonZeroU64,
+    jitter_fraction: f64,
+) -> Duration {
+    let range_secs = 2u64.saturating_pow(retry_count).min(max_backoff_secs.get());
+    let jitter = if jitter_fraction.is_finite() {
+        jitter_fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    Duration::from_secs(range_secs).mul_f64(jitter)
 }
 
-/// JSONをサイズ上限制御の上で取得してパース
-pub async fn fetch_json_with_limit<T: serde::de::DeserializeOwned>(
+pub(crate) async fn fetch_json_with_limit<T: serde::de::DeserializeOwned>(
     client: &Client,
     url: &str,
     max_bytes: u64,
 ) -> Result<T, AppError> {
-    let resp = client.get(url).send().await?.error_for_status()?;
+    let response = client.get(url).send().await?.error_for_status()?;
 
-    if resp.content_length().is_some_and(|len| len > max_bytes) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes)
+    {
         return Err(AppError::Other(format!(
-            "JSON response too large (> {} bytes): {}",
-            max_bytes, url
+            "JSON response too large (> {max_bytes} bytes): {url}"
         )));
     }
 
-    // ボディを上限制御で読み込む
-    let text = read_body_with_limit_to_string(resp, max_bytes).await?;
-    let value = serde_json::from_str::<T>(&text)
-        .map_err(|e| AppError::ParseError(format!("JSON parse error: {e}")))?;
-    Ok(value)
+    let text = read_body_with_limit_to_string(response, max_bytes).await?;
+    serde_json::from_str(&text)
+        .map_err(|error| AppError::ParseError(format!("JSON parse error: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exponential_backoff_duration;
+    use crate::error::AppError;
+    use std::num::NonZeroU64;
+    use std::time::Duration;
+
+    #[test]
+    fn backoff_is_deterministic_for_injected_jitter() -> Result<(), AppError> {
+        let cap = NonZeroU64::new(16)
+            .ok_or_else(|| AppError::Other("non-zero test cap is invalid".into()))?;
+
+        assert_eq!(exponential_backoff_duration(3, cap, 0.0), Duration::ZERO);
+        assert_eq!(
+            exponential_backoff_duration(3, cap, 0.5),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            exponential_backoff_duration(40, cap, 0.5),
+            Duration::from_secs(8)
+        );
+        assert_eq!(
+            exponential_backoff_duration(u32::MAX, cap, f64::NAN),
+            Duration::ZERO
+        );
+        Ok(())
+    }
 }

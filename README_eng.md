@@ -1,127 +1,185 @@
-## fire-scope
-This CLI application is used to retrieve the latest address allocation files provided by each Regional Internet Registry (RIR) and output the IPv4/v6 address blocks corresponding to the specified country code to a text file.
-It can also retrieve the specified AS number and also output it to a text file.
+# fire-scope
+
+`fire-scope` is a CLI that retrieves and aggregates IPv4/IPv6 CIDRs for country codes or AS numbers and writes them in TXT or nftables format. It can also calculate the overlap between country and AS CIDR sets.
 
 ## Features
-- Download latest data from multiple RIRs (AFRINIC, LACNIC, RIPE, APNIC, ARIN)
-- Up to 10 retries and exponential backoff + random sleep to attempt stable acquisition
-- Filter by country code and output unduplicated subnet lists (IPv4 / IPv6)
-- Fast download and processing using Tokio
-- Output files are automatically generated as IPv4_XX.txt / IPv6_XX.txt (where XX is the country code)
 
-## Output format.
-- IPv4_XX.txt / IPv6_XX.txt
-  - XX is an optional country code.
-- One subnet is listed per line.
-- The first line contains the date and time of execution.
+- Builds country CIDR lists from the delegated statistics published by AFRINIC, LACNIC, RIPE NCC, APNIC, and ARIN
+- Fetches announced AS prefixes from RIPEstat and ARIN RDAP
+- Deduplicates and aggregates CIDRs and writes them in deterministic order
+- Configurable RIR retries, exponential backoff with Full Jitter, and partial-failure policy
+- Streams HTTP responses with a 32 MiB limit for RIR files and an 8 MiB limit for JSON
+- Atomically overwrites TXT or nftables output in the current working directory
 
-## Information Sources
-- When specifying the `-c` option, data is retrieved from the following
-  - [AFRINIC](https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest)
-  - [LACNIC](https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest)
-  - [RIPE NCC](https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest)
-  - [APNIC](https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest)
-  - [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
+## Requirements
 
-- When specifying the `-a` option, data is retrieved from the following
-  - RIPEstat Announced Prefixes API (primary)
-  - ARIN RDAP OriginAS networks (fallback)
+- Rust 1.85 or later
+- HTTPS access to the external RIR, RIPEstat, and ARIN RDAP services
+- Write permission for the current working directory at runtime
 
+## Installation
 
-## Usage
-### Installation
-```bash
-$ cargo install fire-scope
-```
-### Example
-- **Note**
-  - Either `-c` or `-a` must be specified.
-  - If not specified, an error occurs.
-```bash
-$ fire-scope -c jp us
+Run this from any directory to install from crates.io.
+
+```zsh
+cargo install fire-scope
 ```
 
-```bash
-$ fire-scope -a 0000 1234
+Run this from the repository root to install from source.
+
+```zsh
+cargo install --path "."
 ```
 
-```bash
-$ fire-scope -c jp us -a 0000 1234 -o
+## CLI
+
+Version 0.2.0 introduces a breaking CLI change. The old `-c`, `-a`, and `-o` syntax is not supported.
+
+```text
+fire-scope [GLOBAL OPTIONS] <COMMAND>
+
+Commands:
+  list country <COUNTRY_CODE>...
+  list asn <AS_NUMBER>...
+  overlap --country <COUNTRY_CODE>... --asn <AS_NUMBER>...
 ```
 
-### Options
-- `-c`: Specify one or more country codes.
-- `-a`: Specify one or more AS numbers.
-- `-h`: Display help.
-- `-v`: Display version.
-- `-o`: Output the overlapping IP addresses among the IPv4/v6 addresses of the specified country code(s) and AS number(s).
-  - By design, both `-c` and `-a` must be specified.
+Country codes must contain two or three ASCII letters and are normalized to uppercase. AS numbers must fit in a `u32`.
 
-- Tuning options
-  - `--format {txt|nft}`: Output format (default: `txt`).
-  - `--max-retries <N>`: HTTP retry attempts (default: 6).
-  - `--max-backoff-sec <SEC>`: Cap for exponential backoff per retry (default: 16).
-  - `--http-timeout-secs <SEC>`: Overall HTTP timeout (default: 20).
-  - `--connect-timeout-secs <SEC>`: Connect timeout (default: 10).
-  - `--concurrency <N>`: Max concurrent AS queries (default: 5).
-  - `--continue-on-partial`: Continue processing with successfully downloaded RIR files even if some fail (default: off = strict).
+### Country lists
 
-### Partial failure behavior
-- By default, the command fails if any RIR file download fails.
-- With `--continue-on-partial`, it proceeds using successfully downloaded files (and prints warnings).
-- If all downloads fail, it always exits with an error.
+After installation, run the command from the directory where the files should be written.
 
-### nftables usage
-1) Generate nft format files
-```bash
-fire-scope -c jp --format nft
+```zsh
+fire-scope list country jp us
 ```
-This creates `IPv4_JP.nft` / `IPv6_JP.nft` with
-`define IPv4_JP = { ... }` / `define IPv6_JP = { ... }`.
 
-2) Include and reference in nftables
+### AS lists
+
+```zsh
+fire-scope list asn 1234 65000
+```
+
+### Country and AS overlap
+
+The command unions the selected country CIDRs, unions the selected AS CIDRs, and writes the overlap of the two sets.
+
+```zsh
+fire-scope overlap --country jp us --asn 1234 65000
+```
+
+### Global options
+
+| Option | Description | Default |
+|---|---|---|
+| `-f, --format <txt\|nft>` | Output format | `txt` |
+| `--http-timeout-secs <SEC>` | Overall HTTP request timeout in seconds; zero is rejected | `20` |
+| `--connect-timeout-secs <SEC>` | HTTP connection timeout in seconds; zero is rejected | `10` |
+| `-d, --debug` | Write debug diagnostics to stderr | disabled |
+| `-h, --help` | Display help | - |
+| `-V, --version` | Display the version | - |
+
+### RIR options
+
+These options apply to `list country` and `overlap`.
+
+| Option | Description | Default |
+|---|---|---|
+| `--rir-attempts <N>` | Number of HTTP attempts per RIR; zero is rejected | `6` |
+| `--max-backoff-secs <SEC>` | Maximum exponential-backoff delay with Full Jitter; zero is rejected | `16` |
+| `--continue-on-partial` | Continue with the successfully downloaded RIR files | disabled |
+
+By default, any RIR download failure causes the command to fail. With `--continue-on-partial`, the command warns and continues with the RIR files it obtained. A failure to download every RIR always causes the command to fail.
+
+```zsh
+fire-scope list country jp us --rir-attempts 3 --max-backoff-secs 8 --continue-on-partial
+```
+
+### AS options
+
+This option applies to `list asn` and `overlap`.
+
+| Option | Description | Default |
+|---|---|---|
+| `-C, --concurrency <N>` | Concurrent AS queries; accepted range is `1..=64` | `5` |
+
+```zsh
+fire-scope list asn 1234 65000 -C 10
+```
+
+`list asn` writes files for successful AS queries, reports all failed AS numbers to stderr, and then exits non-zero. `overlap` writes no overlap file and exits non-zero if any AS query fails.
+
+## Data sources
+
+Country lists use the following RIR delegated statistics files:
+
+- [AFRINIC](https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest)
+- [LACNIC](https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest)
+- [RIPE NCC](https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-extended-latest)
+- [APNIC](https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest)
+- [ARIN](https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest)
+
+AS lists use these rules:
+
+- When the RIPEstat Announced Prefixes API succeeds, any successful ARIN RDAP OriginAS result is also merged on a best-effort basis
+- When RIPEstat fails, ARIN RDAP OriginAS is the required fallback
+- When both RIPEstat and ARIN fail, the AS query fails
+
+ARIN OriginAS data may not be comprehensive for every region or registration.
+
+## Output
+
+Files are written to the current working directory. An existing file is replaced only after its temporary replacement has been written.
+
+| Command | Example IPv4 output | Example IPv6 output |
+|---|---|---|
+| `list country jp` | `IPv4_JP.txt` | `IPv6_JP.txt` |
+| `list asn 1234` | `AS_1234_IPv4.txt` | `AS_1234_IPv6.txt` |
+| `overlap --country jp --asn 1234` | `overlap_JP_1234_IPv4.txt` | `overlap_JP_1234_IPv6.txt` |
+
+With `nft`, the extension is `.nft`, and the sanitized file stem is used as the `define` name. No file is created for an IP family with no overlap or for an AS IP family with no retrieved prefixes.
+
+Each file starts with comments containing its generation time, country code, and AS number. TXT output contains one CIDR per line. nftables output uses this form:
+
+```zsh
+fire-scope -f nft list country jp
+```
+
+```nft
+define IPv4_JP = {
+    192.0.2.0/24,
+    198.51.100.0/24
+}
+```
+
+After placing the generated files at the required path, include them from the nftables configuration.
+
 ```nft
 include "/etc/nftables/IPv4_JP.nft"
 include "/etc/nftables/IPv6_JP.nft"
 
 table inet filter {
-  chain input {
-    type filter hook input priority 0;
-    ip  saddr $IPv4_JP accept
-    ip6 saddr $IPv6_JP accept
-  }
+    chain input {
+        type filter hook input priority 0;
+        ip saddr $IPv4_JP accept
+        ip6 saddr $IPv6_JP accept
+    }
 }
 ```
-Place the generated files in an appropriate path and `include` them.
 
-### Exit codes
-- 0: Success
-- Non-zero: Invalid input (e.g., missing `-c`/`-a`), network/HTTP failure (strict mode), no usable RIR files, file write error, etc.
+## Exit codes
 
-## Notes
-- Output files are always overwritten if they already exist.
-- If neither `-c` nor `-a` are specified, the command exits with a non-zero code.
+- `0`: Processing and all required output completed
+- Non-zero: Invalid arguments, network or HTTP failure, partial RIR failure in strict mode, total RIR failure, AS query failure, parse failure, file-write failure, or another fatal error
 
-## Security
-- Filenames and nft define names are sanitized to alphanumerics/underscore to avoid path traversal and injection.
-- `-c/--country` accepts only alphabetic ISO-like codes (length 2–3).
-- HTTP client enforces overall and connect timeouts and sets a descriptive User-Agent.
-- RIR downloads are read in streaming mode and rejected once size exceeds 32 MiB (even if `Content-Length` is missing).
-- RIPEstat/ARIN JSON responses are streamed and limited to 8 MiB.
+## Security and limitations
 
-## Known limitations
-- AS prefixes are fetched primarily from RIPEstat, with ARIN RDAP as a fallback.
-- RPKI validation is not enabled by default (internal code exists, CLI not exposed yet).
-- Availability depends on external APIs/files; tune with `--max-retries` and `--max-backoff-sec` if needed.
-
-## Requirements
-- Use the latest stable Rust toolchain with Edition 2024 support. `rustup update stable` is recommended.
-
-## Recommended options
-- Faster yet stable fetch:
-  - `fire-scope -c jp us --max-retries 3 --max-backoff-sec 8 --continue-on-partial`
-- Speed up AS queries with concurrency:
-  - `fire-scope -a 1234 65000 -C 10`
+- Country codes are validated at the input boundary, and file names and nftables identifiers are sanitized.
+- The HTTP client enforces overall and connection timeouts.
+- Streaming size limits also apply when a response has no `Content-Length` header.
+- RPKI validation is not performed. Output is based on the delegation and announcement data returned by the configured sources.
+- Results depend on the availability and contents of external RIR files and APIs.
 
 ## License
+
 [MPL-2.0](./LICENSE.txt)

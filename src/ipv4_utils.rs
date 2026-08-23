@@ -2,107 +2,139 @@ use crate::error::AppError;
 use ipnet::{IpNet, Ipv4Net};
 use std::net::Ipv4Addr;
 
-pub trait ILog2Sub1 {
-    fn ilog2_sub1(&self) -> u32;
-}
-
-impl ILog2Sub1 for u32 {
-    fn ilog2_sub1(&self) -> u32 {
-        if *self == 0 {
-            0
-        } else {
-            31 - self.leading_zeros()
-        }
-    }
-}
-
-pub trait ILog2Sub1U64 {
-    fn ilog2_sub1_u64(&self) -> u32;
-}
-
-impl ILog2Sub1U64 for u64 {
-    fn ilog2_sub1_u64(&self) -> u32 {
-        if *self == 0 {
-            0
-        } else {
-            63 - self.leading_zeros()
-        }
-    }
-}
-
-/// currentから始まりendを超えない最大のIPv4 CIDRプレフィックス長(≤ 32)を返す。
-pub fn largest_ipv4_block(current: u64, end: u64) -> u8 {
-    debug_assert!(current <= end, "current must be <= end");
-
-    // current(32ビット空)の末尾ゼロビットの数
-    let tz: u32 = (current as u32).trailing_zeros();
-    // 残りのアドレス範囲に収まるビット数
-    let span: u32 = (end - current + 1).ilog2_sub1_u64();
-
-    // ホスト部で使用可能なビット
-    let max_block = tz.min(span);
-    // CIDRプレフィックス長(0-32)
-    (32 - max_block) as u8
-}
-
-/// IPv4の範囲[`start`, `end`]をCIDRの最小セットにまとめる。
-///
-/// # Examples
-///
-/// ```
-/// use fire_scope::ipv4_utils::ipv4_summarize_range;
-///
-/// // 10.0.0.0 ~ 10.0.0.255 → 10.0.0.0/24
-/// let cidrs = ipv4_summarize_range(0x0A000000, 0x0A0000FF);
-/// assert_eq!(cidrs.len(), 1);
-/// assert_eq!(cidrs[0].to_string(), "10.0.0.0/24");
-/// ```
-pub fn ipv4_summarize_range(start: u64, end: u64) -> Vec<IpNet> {
-    let mut cidrs = Vec::<IpNet>::new();
-    let mut current = start;
-
-    while current <= end {
-        let max_size = largest_ipv4_block(current, end);
-
-        // IPv4Netは32ビットアドレスのみをサポートする
-        if current > u32::MAX as u64 {
-            // 範囲外のセクションを無視する
-            break;
-        }
-
-        if let Ok(net) = Ipv4Net::new(Ipv4Addr::from(current as u32), max_size) {
-            cidrs.push(IpNet::V4(net));
-            let block_size: u64 = 1u64 << (32 - max_size);
-            current = current.saturating_add(block_size);
-        } else {
-            // フェイルセーフ
-            break;
-        }
-    }
-
-    cidrs
-}
-
-/// RIR拡張フォーマットのIPv4行（start, value）をCIDR列へ展開
-pub fn parse_ipv4_range_to_cidrs(start_str: &str, value_str: &str) -> Result<Vec<IpNet>, AppError> {
-    let start_addr = start_str.parse::<Ipv4Addr>()?;
-    let width_u64 = value_str.parse::<u64>()?;
-
-    if width_u64 == 0 {
-        return Err(AppError::ParseError("IPv4 width must be > 0".into()));
-    }
-
-    let start_num = u32::from(start_addr) as u64;
-    let end_num_u64 = start_num
-        .checked_add(width_u64)
-        .and_then(|v| v.checked_sub(1))
-        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".into()))?;
-
-    if end_num_u64 > u32::MAX as u64 {
+fn largest_ipv4_block(current: u32, end: u32) -> Result<u8, AppError> {
+    if current > end {
         return Err(AppError::ParseError(
-            "IPv4 range exceeds 32-bit boundary".into(),
+            "IPv4 range start must not exceed its end".to_owned(),
         ));
     }
 
-    Ok(ipv4_summarize_range(start_num, end_num_u64))
+    let span = u64::from(end)
+        .checked_sub(u64::from(current))
+        .and_then(|difference| difference.checked_add(1))
+        .ok_or_else(|| AppError::ParseError("IPv4 range length overflow".to_owned()))?;
+    let block_bits = current.trailing_zeros().min(span.ilog2());
+    let prefix = 32_u32
+        .checked_sub(block_bits)
+        .ok_or_else(|| AppError::ParseError("Invalid IPv4 prefix length".to_owned()))?;
+    u8::try_from(prefix).map_err(|_| AppError::ParseError("Invalid IPv4 prefix length".to_owned()))
+}
+
+pub(crate) fn ipv4_summarize_range(start: u32, end: u32) -> Result<Vec<IpNet>, AppError> {
+    if start > end {
+        return Err(AppError::ParseError(
+            "IPv4 range start must not exceed its end".to_owned(),
+        ));
+    }
+
+    let mut cidrs = Vec::new();
+    let mut current = start;
+
+    loop {
+        let prefix = largest_ipv4_block(current, end)?;
+        let net = Ipv4Net::new(Ipv4Addr::from(current), prefix)
+            .map_err(|error| AppError::ParseError(format!("Invalid IPv4 network: {error}")))?;
+        cidrs.push(IpNet::V4(net));
+
+        let host_bits = 32_u8
+            .checked_sub(prefix)
+            .ok_or_else(|| AppError::ParseError("Invalid IPv4 prefix length".to_owned()))?;
+        let block_size = 1_u64
+            .checked_shl(u32::from(host_bits))
+            .ok_or_else(|| AppError::ParseError("IPv4 block size overflow".to_owned()))?;
+        let next_address = u64::from(current)
+            .checked_add(block_size)
+            .ok_or_else(|| AppError::ParseError("IPv4 range overflow".to_owned()))?;
+        if next_address > u64::from(end) {
+            break;
+        }
+        current = u32::try_from(next_address)
+            .map_err(|_| AppError::ParseError("IPv4 range exceeds 32-bit boundary".to_owned()))?;
+    }
+
+    Ok(cidrs)
+}
+
+pub(crate) fn parse_ipv4_range_to_cidrs(
+    start_str: &str,
+    value_str: &str,
+) -> Result<Vec<IpNet>, AppError> {
+    let start = u32::from(start_str.parse::<Ipv4Addr>()?);
+    let width = value_str.parse::<u64>()?;
+    if width == 0 {
+        return Err(AppError::ParseError("IPv4 width must be > 0".to_owned()));
+    }
+
+    let end = u64::from(start)
+        .checked_add(width)
+        .and_then(|exclusive_end| exclusive_end.checked_sub(1))
+        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".to_owned()))?;
+    let end = u32::try_from(end)
+        .map_err(|_| AppError::ParseError("IPv4 range exceeds 32-bit boundary".to_owned()))?;
+
+    ipv4_summarize_range(start, end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ipv4_summarize_range, largest_ipv4_block, parse_ipv4_range_to_cidrs};
+    use std::error::Error;
+
+    #[test]
+    fn chooses_largest_aligned_block() -> Result<(), Box<dyn Error>> {
+        assert_eq!(largest_ipv4_block(0, 255)?, 24);
+        assert_eq!(largest_ipv4_block(0, 511)?, 23);
+        assert_eq!(largest_ipv4_block(1, 1)?, 32);
+        assert!(largest_ipv4_block(2, 1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn summarizes_valid_ranges_and_rejects_reversed_ranges() -> Result<(), Box<dyn Error>> {
+        let entire_family = ipv4_summarize_range(0, u32::MAX)?;
+        let full_block = ipv4_summarize_range(0, 255)?;
+        let unaligned = ipv4_summarize_range(1, 3)?;
+
+        assert_eq!(
+            entire_family
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["0.0.0.0/0"]
+        );
+        assert_eq!(
+            full_block
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["0.0.0.0/24"]
+        );
+        assert_eq!(
+            unaligned
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["0.0.0.1/32", "0.0.0.2/31"]
+        );
+        assert!(ipv4_summarize_range(2, 1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn parses_rir_range_with_checked_boundary() -> Result<(), Box<dyn Error>> {
+        let single = parse_ipv4_range_to_cidrs("1.2.3.4", "1")?;
+        let block = parse_ipv4_range_to_cidrs("1.2.3.0", "256")?;
+
+        assert_eq!(
+            single.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["1.2.3.4/32"]
+        );
+        assert_eq!(
+            block.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["1.2.3.0/24"]
+        );
+        assert!(parse_ipv4_range_to_cidrs("1.2.3.4", "0").is_err());
+        assert!(parse_ipv4_range_to_cidrs("255.255.255.255", "2").is_err());
+        Ok(())
+    }
 }

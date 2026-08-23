@@ -1,10 +1,9 @@
 use std::{io, net::AddrParseError, num::ParseIntError, string::FromUtf8Error};
 use thiserror::Error;
-use tokio::sync::AcquireError;
 use tokio::task::JoinError;
 
 #[derive(Error, Debug)]
-pub enum AppError {
+pub(crate) enum AppError {
     // IOまわりのエラー
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
@@ -21,19 +20,11 @@ pub enum AppError {
     #[error("Parse error: {0}")]
     ParseError(String),
 
-    // 特定の入力が不正だった場合など
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-
     // その他、文字列メッセージだけを格納した汎用エラー
     #[error("{0}")]
     Other(String),
 
-    // acquire_owned().await? のエラー
-    #[error("Semaphore acquire error: {0}")]
-    SemaphoreError(#[from] AcquireError),
-
-    // tokio::spawn(…).await? のエラー
+    // spawn_blocking(…).await? のエラー
     #[error("Task join error: {0}")]
     JoinError(#[from] JoinError),
 
