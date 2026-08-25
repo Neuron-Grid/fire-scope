@@ -25,6 +25,14 @@ fn selects_and_merges_countries_without_changing_the_map() {
     let merged = selection.merged_ips();
 
     assert_eq!(country_map, original);
+    assert_eq!(
+        selection
+            .found
+            .iter()
+            .map(|(country_code, _)| *country_code)
+            .collect::<Vec<_>>(),
+        ["JP", "US"]
+    );
     assert_eq!(merged.ipv4().len(), 1);
     assert_eq!(merged.ipv6().len(), 1);
     assert_eq!(selection.missing_codes, ["ZZ"]);

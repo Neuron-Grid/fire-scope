@@ -1,4 +1,4 @@
-use super::{ipv4_summarize_range, largest_ipv4_block, parse_ipv4_range_to_cidrs};
+use super::{ipv4_summarize_range, largest_ipv4_block};
 use std::error::Error;
 
 #[test]
@@ -38,23 +38,5 @@ fn summarizes_valid_ranges_and_rejects_reversed_ranges() -> Result<(), Box<dyn E
         ["0.0.0.1/32", "0.0.0.2/31"]
     );
     assert!(ipv4_summarize_range(2, 1).is_err());
-    Ok(())
-}
-
-#[test]
-fn parses_rir_range_with_checked_boundary() -> Result<(), Box<dyn Error>> {
-    let single = parse_ipv4_range_to_cidrs("1.2.3.4", "1")?;
-    let block = parse_ipv4_range_to_cidrs("1.2.3.0", "256")?;
-
-    assert_eq!(
-        single.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        ["1.2.3.4/32"]
-    );
-    assert_eq!(
-        block.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        ["1.2.3.0/24"]
-    );
-    assert!(parse_ipv4_range_to_cidrs("1.2.3.4", "0").is_err());
-    assert!(parse_ipv4_range_to_cidrs("255.255.255.255", "2").is_err());
     Ok(())
 }

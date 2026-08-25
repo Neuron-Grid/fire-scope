@@ -79,7 +79,7 @@ pub(crate) struct CountryArgs {
 #[derive(Args, Debug)]
 pub(crate) struct AsnArgs {
     #[arg(required = true)]
-    pub(crate) as_numbers: Vec<u32>,
+    pub(crate) as_numbers: Vec<NonZeroU32>,
 
     #[command(flatten)]
     pub(crate) query: AsnQueryOptions,
@@ -96,7 +96,7 @@ pub(crate) struct OverlapArgs {
     pub(crate) country_codes: Vec<String>,
 
     #[arg(long = "asn", required = true, num_args = 1..)]
-    pub(crate) as_numbers: Vec<u32>,
+    pub(crate) as_numbers: Vec<NonZeroU32>,
 
     #[command(flatten)]
     pub(crate) rir: RirOptions,

@@ -43,8 +43,17 @@ fn reports_version_0_2_0() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn rejects_legacy_flat_flags() -> Result<(), std::io::Error> {
-    for args in [&["-c", "jp"][..], &["-a", "1234"][..], &["-o"][..]] {
+fn rejects_legacy_cli_syntax() -> Result<(), std::io::Error> {
+    for args in [
+        &["-c", "jp"][..],
+        &["-a", "1234"][..],
+        &["-o"][..],
+        &["--country", "jp"][..],
+        &["--as-number", "1234"][..],
+        &["--overlap"][..],
+        &["list", "country", "jp", "--max-retries", "1"][..],
+        &["list", "country", "jp", "--max-backoff-sec", "1"][..],
+    ] {
         assert!(!fire_scope(args)?.status.success());
     }
     Ok(())

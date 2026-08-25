@@ -1,10 +1,10 @@
 mod list_asn;
 mod list_country;
 mod overlap;
+mod rir;
 
-use crate::cli::{Cli, Command, ListCommand, RirOptions};
-use crate::common_download::download_all_rir_files;
-use crate::diagnostics::DebugOutput;
+use crate::cli::{Cli, Command, ListCommand};
+use crate::diagnostics::{DebugOutput, write_stderr};
 use crate::error::AppError;
 use clap::Parser;
 use reqwest::Client;
@@ -16,7 +16,7 @@ pub async fn run() -> ExitCode {
     match execute(Cli::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Error: {error}");
+            write_stderr(format_args!("Error: {error}"));
             ExitCode::FAILURE
         }
     }
@@ -50,42 +50,3 @@ fn build_client(cli: &Cli) -> Result<Client, AppError> {
         .build()
         .map_err(AppError::from)
 }
-
-pub(super) async fn download_rir_texts(
-    client: &Client,
-    options: RirOptions,
-    debug: DebugOutput,
-) -> Result<Vec<String>, AppError> {
-    let (texts, failed_urls) =
-        download_all_rir_files(client, options.attempts, options.max_backoff_secs, debug).await;
-
-    if !failed_urls.is_empty() {
-        eprintln!(
-            "Warning: {} RIR download(s) failed: {}",
-            failed_urls.len(),
-            failed_urls.join(", ")
-        );
-    }
-
-    apply_rir_failure_policy(texts, failed_urls.len(), options.continue_on_partial)
-}
-
-fn apply_rir_failure_policy(
-    texts: Vec<String>,
-    failed_count: usize,
-    continue_on_partial: bool,
-) -> Result<Vec<String>, AppError> {
-    if failed_count > 0 && !continue_on_partial {
-        return Err(AppError::Other(
-            "Some RIR downloads failed (use --continue-on-partial to proceed)".into(),
-        ));
-    }
-
-    (!texts.is_empty())
-        .then_some(texts)
-        .ok_or_else(|| AppError::Other("No RIR files available to process".into()))
-}
-
-#[cfg(test)]
-#[path = "../../tests/unit/commands.rs"]
-mod tests;

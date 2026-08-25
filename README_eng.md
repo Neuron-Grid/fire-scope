@@ -33,7 +33,7 @@ cargo install --path "."
 
 ## CLI
 
-Version 0.2.0 introduces a breaking CLI change. The old `-c`, `-a`, and `-o` syntax is not supported.
+Version 0.2.0 introduces breaking changes. The old top-level `-c` / `--country`, `-a` / `--as-number`, and `-o` / `--overlap` syntax is not supported. The old `--max-retries` option is now `--rir-attempts`, and `--max-backoff-sec` is now `--max-backoff-secs`. The public Rust API is now limited to `fire_scope::run()`; the previous public module APIs were removed.
 
 ```text
 fire-scope [GLOBAL OPTIONS] <COMMAND>
@@ -44,7 +44,7 @@ Commands:
   overlap --country <COUNTRY_CODE>... --asn <AS_NUMBER>...
 ```
 
-Country codes must contain two or three ASCII letters and are normalized to uppercase. AS numbers must fit in a `u32`.
+Country codes must contain two or three ASCII letters and are normalized to uppercase. AS numbers must be in `1..=u32::MAX`; zero is rejected.
 
 ### Country lists
 
@@ -177,6 +177,8 @@ table inet filter {
 - Country codes are validated at the input boundary, and file names and nftables identifiers are sanitized.
 - The HTTP client enforces overall and connection timeouts.
 - Streaming size limits also apply when a response has no `Content-Length` header.
+- HTTP size limits apply per response. Total memory use grows with the number of concurrent AS queries.
+- Atomic replacement applies per file. An empty result or fetch failure does not remove an older file with the same name.
 - RPKI validation is not performed. Output is based on the delegation and announcement data returned by the configured sources.
 - Results depend on the availability and contents of external RIR files and APIs.
 

@@ -39,7 +39,8 @@ fn parses_nested_asn_and_overlap_commands() -> Result<(), clap::Error> {
         asn.command,
         Command::List {
             target: ListCommand::Asn(args)
-        } if args.as_numbers == [1234, 65000] && args.query.concurrency == 64
+        } if args.as_numbers.iter().map(|number| number.get()).eq([1234, 65000])
+            && args.query.concurrency == 64
     ));
 
     let overlap =
@@ -52,7 +53,7 @@ fn parses_nested_asn_and_overlap_commands() -> Result<(), clap::Error> {
         overlap.command,
         Command::Overlap(args)
             if args.country_codes == ["JP"]
-                && args.as_numbers == [1234]
+                && args.as_numbers.iter().map(|number| number.get()).eq([1234])
                 && args.rir.attempts.get() == 6
                 && args.rir.max_backoff_secs.get() == 16
                 && !args.rir.continue_on_partial
@@ -96,7 +97,7 @@ fn accepts_typed_boundary_values() -> Result<(), clap::Error> {
             cli.command,
             Command::List {
                 target: ListCommand::Asn(args)
-            } if args.as_numbers == [u32::MAX]
+            } if args.as_numbers.iter().map(|number| number.get()).eq([u32::MAX])
                 && args.query.concurrency == expected
         ));
     }
@@ -120,8 +121,10 @@ fn rejects_invalid_boundaries_and_legacy_flags() {
             "0",
         ],
         vec!["fire-scope", "list", "asn", "invalid"],
+        vec!["fire-scope", "list", "asn", "0"],
         vec!["fire-scope", "list", "asn", "-1"],
         vec!["fire-scope", "list", "asn", "4294967296"],
+        vec!["fire-scope", "overlap", "--country", "JP", "--asn", "0"],
         vec!["fire-scope", "list", "asn", "1", "-C", "0"],
         vec!["fire-scope", "list", "asn", "1", "-C", "65"],
         vec!["fire-scope", "--format", "json", "list", "asn", "1"],

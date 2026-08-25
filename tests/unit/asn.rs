@@ -1,10 +1,8 @@
-use super::{
-    buffered_results, extract_prefixes_from_arin, extract_prefixes_from_ripe_stat,
-    finalize_as_processing,
-};
+use super::{buffered_results, extract_prefixes_from_arin, extract_prefixes_from_ripe_stat};
 use crate::error::AppError;
 use futures::StreamExt;
 use serde_json::json;
+use std::num::NonZeroU32;
 
 #[test]
 fn pure_extractors_ignore_invalid_entries() {
@@ -28,10 +26,15 @@ fn pure_extractors_ignore_invalid_entries() {
 }
 
 #[tokio::test]
-async fn buffered_fetch_preserves_input_order_and_failure() {
-    let as_numbers = [3, 1, 2];
+async fn buffered_fetch_preserves_input_order_and_failure() -> Result<(), std::num::TryFromIntError>
+{
+    let as_numbers = [
+        NonZeroU32::try_from(3)?,
+        NonZeroU32::try_from(1)?,
+        NonZeroU32::try_from(2)?,
+    ];
     let results = buffered_results(&as_numbers, 2, |as_number| async move {
-        if as_number == 1 {
+        if as_number.get() == 1 {
             Err(AppError::Other("failed".into()))
         } else {
             Ok(as_number)
@@ -48,19 +51,5 @@ async fn buffered_fetch_preserves_input_order_and_failure() {
         as_numbers
     );
     assert!(results.get(1).is_some_and(|(_, result)| result.is_err()));
-}
-
-#[test]
-fn finalization_reports_partial_failure() {
-    let outcomes = vec![
-        (1234, Ok::<(), AppError>(())),
-        (5678, Err(AppError::Other("boom".into()))),
-    ];
-    let message = finalize_as_processing(outcomes)
-        .err()
-        .map(|error| error.to_string());
-
-    assert!(message.as_deref().is_some_and(|text| {
-        text.contains("Failed to process 1 AS number(s)") && text.contains("AS5678: boom")
-    }));
+    Ok(())
 }

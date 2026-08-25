@@ -1,4 +1,3 @@
-use crate::constants::MAX_RIR_DOWNLOAD_BYTES;
 use crate::diagnostics::DebugOutput;
 use crate::error::AppError;
 use futures::StreamExt;
@@ -6,6 +5,8 @@ use reqwest::Client;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::time::Duration;
 use tokio::time::sleep;
+
+const MAX_RIR_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
 
 async fn read_body_with_limit_to_string(
     response: reqwest::Response,
@@ -33,19 +34,23 @@ async fn read_body_with_limit_to_string(
     String::from_utf8(buffer).map_err(AppError::from)
 }
 
-async fn fetch_once(client: &Client, url: &str) -> Result<String, AppError> {
+async fn fetch_text_with_limit(
+    client: &Client,
+    url: &str,
+    max_bytes: u64,
+) -> Result<String, AppError> {
     let response = client.get(url).send().await?.error_for_status()?;
 
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_RIR_DOWNLOAD_BYTES)
+        .is_some_and(|length| length > max_bytes)
     {
         return Err(AppError::Other(format!(
-            "Response too large (> {MAX_RIR_DOWNLOAD_BYTES} bytes): {url}"
+            "Response too large (> {max_bytes} bytes): {url}"
         )));
     }
 
-    read_body_with_limit_to_string(response, MAX_RIR_DOWNLOAD_BYTES).await
+    read_body_with_limit_to_string(response, max_bytes).await
 }
 
 pub(crate) async fn fetch_with_retry(
@@ -57,7 +62,7 @@ pub(crate) async fn fetch_with_retry(
 ) -> Result<String, AppError> {
     let attempts = retry_attempts.get();
     for retry_count in 0..attempts {
-        match fetch_once(client, url).await {
+        match fetch_text_with_limit(client, url, MAX_RIR_DOWNLOAD_BYTES).await {
             Ok(text) => return Ok(text),
             Err(error) => {
                 debug.log(format!(
@@ -98,25 +103,17 @@ fn exponential_backoff_duration(
     Duration::from_secs(range_secs).mul_f64(jitter)
 }
 
-pub(crate) async fn fetch_json_with_limit<T: serde::de::DeserializeOwned>(
+pub(crate) async fn fetch_json_with_limit<T: serde::de::DeserializeOwned + Send + 'static>(
     client: &Client,
     url: &str,
     max_bytes: u64,
 ) -> Result<T, AppError> {
-    let response = client.get(url).send().await?.error_for_status()?;
-
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_bytes)
-    {
-        return Err(AppError::Other(format!(
-            "JSON response too large (> {max_bytes} bytes): {url}"
-        )));
-    }
-
-    let text = read_body_with_limit_to_string(response, max_bytes).await?;
-    serde_json::from_str(&text)
-        .map_err(|error| AppError::ParseError(format!("JSON parse error: {error}")))
+    let text = fetch_text_with_limit(client, url, max_bytes).await?;
+    tokio::task::spawn_blocking(move || {
+        serde_json::from_str(&text)
+            .map_err(|error| AppError::ParseError(format!("JSON parse error: {error}")))
+    })
+    .await?
 }
 
 #[cfg(test)]

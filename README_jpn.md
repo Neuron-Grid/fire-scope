@@ -33,7 +33,7 @@ cargo install --path "."
 
 ## CLI
 
-バージョン0.2.0ではCLIが破壊的に変更されています。旧 `-c`、`-a`、`-o` 構文は使用できません。
+バージョン0.2.0ではCLIが破壊的に変更されています。旧トップレベルの `-c` / `--country`、`-a` / `--as-number`、`-o` / `--overlap` 構文は使用できません。旧 `--max-retries` は `--rir-attempts`、旧 `--max-backoff-sec` は `--max-backoff-secs` へ変更されています。Rustの公開APIは `fire_scope::run()` だけとなり、従来の公開module APIは削除されています。
 
 ```text
 fire-scope [GLOBAL OPTIONS] <COMMAND>
@@ -44,7 +44,7 @@ Commands:
   overlap --country <COUNTRY_CODE>... --asn <AS_NUMBER>...
 ```
 
-国コードは2〜3文字のASCII英字だけを受け付け、内部で大文字化します。AS番号は `u32` の範囲で指定します。
+国コードは2〜3文字のASCII英字だけを受け付け、内部で大文字化します。AS番号は `1..=u32::MAX` の範囲で指定し、0は受け付けません。
 
 ### 国別リスト
 
@@ -177,6 +177,8 @@ table inet filter {
 - 国コードを入力境界で検証し、ファイル名とnftables識別子もサニタイズします。
 - HTTPの総合タイムアウトと接続タイムアウトを設定します。
 - `Content-Length` がない応答にもストリーミング上限を適用します。
+- HTTPサイズ上限はレスポンス単位です。総メモリ使用量は同時AS問い合わせ数に応じて増加します。
+- atomic置換は1ファイル単位です。空集合または取得失敗時も、以前の同名ファイルは自動削除しません。
 - RPKI検証は行いません。出力は各取得元が返す委任情報・発表情報に基づきます。
 - 結果は外部RIR/APIの可用性と内容に依存します。
 

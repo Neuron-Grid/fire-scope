@@ -55,26 +55,6 @@ pub(crate) fn ipv4_summarize_range(start: u32, end: u32) -> Result<Vec<IpNet>, A
     Ok(cidrs)
 }
 
-pub(crate) fn parse_ipv4_range_to_cidrs(
-    start_str: &str,
-    value_str: &str,
-) -> Result<Vec<IpNet>, AppError> {
-    let start = u32::from(start_str.parse::<Ipv4Addr>()?);
-    let width = value_str.parse::<u64>()?;
-    if width == 0 {
-        return Err(AppError::ParseError("IPv4 width must be > 0".to_owned()));
-    }
-
-    let end = u64::from(start)
-        .checked_add(width)
-        .and_then(|exclusive_end| exclusive_end.checked_sub(1))
-        .ok_or_else(|| AppError::ParseError("IPv4 range is too large".to_owned()))?;
-    let end = u32::try_from(end)
-        .map_err(|_| AppError::ParseError("IPv4 range exceeds 32-bit boundary".to_owned()))?;
-
-    ipv4_summarize_range(start, end)
-}
-
 #[cfg(test)]
 #[path = "../tests/unit/ipv4_utils.rs"]
 mod tests;

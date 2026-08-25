@@ -4,6 +4,7 @@ use crate::ip::IpSets;
 use futures::stream;
 use ipnet::IpNet;
 use std::error::Error;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
 #[tokio::test]
@@ -15,15 +16,15 @@ async fn as_collection_merges_successes_and_propagates_failure() -> Result<(), B
         .into_iter()
         .collect::<IpSets>();
     let merged = collect_as_ips(stream::iter([
-        (1, Ok::<IpSets, AppError>(first)),
-        (2, Ok::<IpSets, AppError>(second)),
+        (NonZeroU32::try_from(1)?, Ok::<IpSets, AppError>(first)),
+        (NonZeroU32::try_from(2)?, Ok::<IpSets, AppError>(second)),
     ]))
     .await?;
     assert_eq!(merged.ipv4().len(), 1);
     assert_eq!(merged.ipv6().len(), 1);
 
     let failure = collect_as_ips(stream::iter([(
-        64512,
+        NonZeroU32::try_from(64512)?,
         Err(AppError::Other("failed".into())),
     )]))
     .await

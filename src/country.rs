@@ -1,4 +1,3 @@
-use crate::error::AppError;
 use crate::ip::IpSets;
 use std::collections::HashMap;
 
@@ -15,16 +14,6 @@ impl CountrySelection<'_> {
             sets.merge((*ips).clone())
         })
     }
-}
-
-pub(crate) async fn parse_country_map(
-    rir_texts: &[String],
-    country_codes: &[String],
-) -> Result<CountryMap, AppError> {
-    let texts = rir_texts.to_owned();
-    let selected = country_codes.to_owned();
-    tokio::task::spawn_blocking(move || crate::parse::parse_all_country_codes(&texts, &selected))
-        .await?
 }
 
 pub(crate) fn select_country_ips<'a>(

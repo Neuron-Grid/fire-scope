@@ -1,11 +1,13 @@
 use crate::diagnostics::DebugOutput;
 use crate::error::AppError;
 use crate::ip::{IpFamily, IpSets};
-use crate::output_common::{make_header, sanitize_identifier, write_list_nft, write_list_txt};
+use crate::output_file::atomic_write;
+use crate::output_render::{make_header, nft_chunks, sanitize_identifier, txt_chunks};
 use chrono::Local;
 use clap::ValueEnum;
 use ipnet::IpNet;
 use std::collections::BTreeSet;
+use std::num::NonZeroU32;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -30,8 +32,14 @@ async fn write_list(
     format: OutputFormat,
 ) -> Result<(), AppError> {
     match format {
-        OutputFormat::Txt => write_list_txt(path, ipnets, header).await,
-        OutputFormat::Nft => write_list_nft(path, ipnets, header).await,
+        OutputFormat::Txt => atomic_write(path, txt_chunks(ipnets, header)).await,
+        OutputFormat::Nft => {
+            let define_name = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .map_or_else(|| "unknown_define".to_owned(), sanitize_identifier);
+            atomic_write(path, nft_chunks(ipnets, header, &define_name)).await
+        }
     }
 }
 
@@ -54,16 +62,32 @@ pub(crate) async fn write_ip_lists_to_files(
     Ok(())
 }
 
-pub(crate) async fn write_as_ip_list_to_file(
-    as_number: u32,
-    family: IpFamily,
-    ipnets: &BTreeSet<IpNet>,
+pub(crate) async fn write_as_ip_lists_to_files(
+    as_number: NonZeroU32,
+    ip_sets: &IpSets,
     format: OutputFormat,
     debug: DebugOutput,
 ) -> Result<(), AppError> {
     let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    write_as_ip_list_to_file(as_number, IpFamily::V4, ip_sets.ipv4(), &now, format, debug).await?;
+    write_as_ip_list_to_file(as_number, IpFamily::V6, ip_sets.ipv6(), &now, format, debug).await
+}
+
+async fn write_as_ip_list_to_file(
+    as_number: NonZeroU32,
+    family: IpFamily,
+    ipnets: &BTreeSet<IpNet>,
+    now: &str,
+    format: OutputFormat,
+    debug: DebugOutput,
+) -> Result<(), AppError> {
+    if ipnets.is_empty() {
+        debug.log(format!("No {} routes for AS{as_number}", family.as_str()));
+        return Ok(());
+    }
+
     let safe_as = sanitize_identifier(&as_number.to_string());
-    let header = make_header(&now, "N/A", &safe_as);
+    let header = make_header(now, "N/A", &safe_as);
     let extension = format.extension();
     let file_name = format!("AS_{safe_as}_{}.{extension}", family.as_str());
 
@@ -74,7 +98,7 @@ pub(crate) async fn write_as_ip_list_to_file(
 
 pub(crate) async fn write_overlap_to_file(
     country_code: &str,
-    as_numbers: &[u32],
+    as_numbers: &[NonZeroU32],
     overlaps: &IpSets,
     format: OutputFormat,
     debug: DebugOutput,
@@ -107,12 +131,14 @@ pub(crate) async fn write_overlap_to_file(
     Ok(())
 }
 
-fn format_as_numbers(as_numbers: &[u32]) -> String {
-    as_numbers
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join("_")
+fn format_as_numbers(as_numbers: &[NonZeroU32]) -> String {
+    as_numbers.iter().fold(String::new(), |mut output, number| {
+        if !output.is_empty() {
+            output.push('_');
+        }
+        output.push_str(&number.to_string());
+        output
+    })
 }
 
 #[cfg(test)]
